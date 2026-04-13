@@ -3,6 +3,8 @@ import { formatBytes, savingsPercent } from '../hooks/formatBytes'
 export default function FileCard({ file, onRemove, onRetry, onDownload }) {
   const { id, name, size, status, progress, result, error } = file
   const savings = result ? savingsPercent(size, result.compressedSize) : null
+  // Only show savings badge when we actually saved something meaningful (>0%)
+  const showSavings = savings !== null && savings > 0
 
   return (
     <div className="flex items-center gap-3 px-3.5 py-3 rounded-xl border border-zinc-100 bg-white group transition-all">
@@ -17,9 +19,7 @@ export default function FileCard({ file, onRemove, onRetry, onDownload }) {
 
       {/* Name + status */}
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-zinc-800 truncate leading-tight">
-          {name}
-        </p>
+        <p className="text-xs font-medium text-zinc-800 truncate leading-tight">{name}</p>
         <div className="mt-1">
           {status === 'compressing' && (
             <div className="flex items-center gap-2">
@@ -52,13 +52,13 @@ export default function FileCard({ file, onRemove, onRetry, onDownload }) {
 
       {/* Right badges + actions */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        {status === 'done' && savings !== null && (
+        {showSavings && (
           <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-blue-50 text-blue-500">
             -{savings}%
           </span>
         )}
 
-        {status === 'done' && (
+        {status === 'done' && result?.url && (
           <button
             onClick={() => onDownload(id)}
             className="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 transition-colors"
