@@ -36,14 +36,13 @@ export default function DropZone({ onFiles, hasFiles = false }) {
       >
         <input ref={inputRef} type="file" accept={ACCEPTED} onChange={onInputChange} className="sr-only" />
         <SmallTreeIcon />
-        <p className="text-sm font-medium text-zinc-800">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-zinc-800 leading-tight">
             {dragging ? 'Replace image' : 'Upload new image'}
-        </p>
-
-        <p className="text-xs text-zinc-400 mt-0.5">
-        PNG, JPG, WebP — up to 50 MB
-        </p>
-        <span className="text-[11px] font-medium text-blue-500 border border-blue-200 bg-blue-50 px-2.5 py-1 rounded-lg">
+          </p>
+          <p className="text-xs text-zinc-400 mt-0.5">PNG, JPG, WebP, AVIF — up to 50 MB</p>
+        </div>
+        <span className="flex-shrink-0 text-[11px] font-medium text-blue-500 border border-blue-200 bg-blue-50 px-2.5 py-1 rounded-lg">
           Browse
         </span>
       </div>
@@ -72,8 +71,10 @@ export default function DropZone({ onFiles, hasFiles = false }) {
       <TreeIcon dragging={dragging} />
 
       <div className="text-center">
-        {dragging ? 'Drop image here' : 'Drop an image here'}
-        <p className="text-xs text-zinc-400 mt-0.5">PNG, JPG, WebP, AVIF — up to 50 MB each</p>
+        <p className="text-sm font-medium text-zinc-800">
+          {dragging ? 'Drop image here' : 'Drop an image here'}
+        </p>
+        <p className="text-xs text-zinc-400 mt-0.5">PNG, JPG, WebP, AVIF — up to 50 MB</p>
       </div>
 
       <button
