@@ -1,30 +1,34 @@
 import { create } from 'zustand'
-import { PRESETS } from '../config/presets'
+import { PRESETS, DEFAULT_ADVANCED } from '../config/presets'
 
 export const useCompressionStore = create((set, get) => ({
   files:             [],
   preset:            'high',
+  advancedSettings:  { ...DEFAULT_ADVANCED },
+  useAdvanced:       false,
   previews:          {},
   previewGeneration: 0,
 
+  // ── File management ──────────────────────────────────────────────────────────
+
   addFiles: (newFiles) => set((state) => {
-    state.files.forEach(f => { if (f.result?.url) URL.revokeObjectURL(f.result.url) })
-    const toAdd = newFiles.map(f => ({
-      ...f, status: 'idle', progress: 0, result: null, error: null,
-    }))
+    const existing = new Set(state.files.map(f => `${f.name}:${f.size}`))
+    const toAdd = newFiles
+      .filter(f => !existing.has(`${f.name}:${f.size}`))
+      .map(f => ({ ...f, status: 'idle', progress: 0, result: null, error: null, outputName: null, presetOverride: null, info: null }))
+    const isFirstBatch = state.files.length === 0
     return {
-      files:             toAdd,
-      previews:          {},
-      previewGeneration: state.previewGeneration + 1,
+      files:             [...state.files, ...toAdd],
+      previews:          isFirstBatch ? {} : state.previews,
+      previewGeneration: isFirstBatch ? state.previewGeneration + 1 : state.previewGeneration,
     }
   }),
 
-  updatePreview: (presetId, patch) => set((state) => ({
-    previews: {
-      ...state.previews,
-      [presetId]: { ...state.previews[presetId], ...patch },
-    },
-  })),
+  replaceFiles: (newFiles) => set((state) => {
+    state.files.forEach(f => { if (f.result?.url) URL.revokeObjectURL(f.result.url) })
+    const toAdd = newFiles.map(f => ({ ...f, status: 'idle', progress: 0, result: null, error: null, outputName: null, presetOverride: null, info: null }))
+    return { files: toAdd, previews: {}, previewGeneration: state.previewGeneration + 1 }
+  }),
 
   removeFile: (id) => set((state) => {
     const file = state.files.find(f => f.id === id)
@@ -32,7 +36,6 @@ export const useCompressionStore = create((set, get) => ({
     return { files: state.files.filter(f => f.id !== id) }
   }),
 
-  // Uses set() with state parameter — avoids calling get() outside of set
   clearFiles: () => set((state) => {
     state.files.forEach(f => { if (f.result?.url) URL.revokeObjectURL(f.result.url) })
     return { files: [], previews: {}, previewGeneration: state.previewGeneration + 1 }
@@ -42,21 +45,61 @@ export const useCompressionStore = create((set, get) => ({
     files: state.files.map(f => f.id === id ? { ...f, ...patch } : f),
   })),
 
-  setPreset: (id) => set({ preset: id }),
+  setFileOutputName: (id, name) => set((state) => ({
+    files: state.files.map(f => f.id === id ? { ...f, outputName: name.trim() || null } : f),
+  })),
+
+  setFilePresetOverride: (id, presetId) => set((state) => ({
+    files: state.files.map(f => f.id === id ? { ...f, presetOverride: presetId } : f),
+  })),
+
+  setFileInfo: (id, info) => set((state) => ({
+    files: state.files.map(f => f.id === id ? { ...f, info } : f),
+  })),
 
   resetAllToIdle: () => set((state) => {
     state.files.forEach(f => { if (f.result?.url) URL.revokeObjectURL(f.result.url) })
-    return {
-      files: state.files.map(f => ({
-        ...f, status: 'idle', progress: 0, result: null, error: null,
-      })),
-      // previews intentionally kept — image hasn't changed
-    }
+    return { files: state.files.map(f => ({ ...f, status: 'idle', progress: 0, result: null, error: null })) }
   }),
 
-  getActiveSettings: () => {
-    const { preset } = get()
-    return PRESETS.find(p => p.id === preset)?.settings ?? PRESETS[1].settings
+  // ── Settings ─────────────────────────────────────────────────────────────────
+
+  setPreset: (id) => set({ preset: id, useAdvanced: false }),
+
+  setAdvancedSettings: (patch) => set((state) => ({
+    advancedSettings: { ...state.advancedSettings, ...patch },
+    useAdvanced: true,
+  })),
+
+  resetAdvancedSettings: () => set({ advancedSettings: { ...DEFAULT_ADVANCED }, useAdvanced: false }),
+
+  // ── Previews ──────────────────────────────────────────────────────────────────
+
+  updatePreview: (presetId, patch) => set((state) => ({
+    previews: { ...state.previews, [presetId]: { ...state.previews[presetId], ...patch } },
+  })),
+
+  // ── Resolve settings for a specific file ────────────────────────────────────
+  // Per-file preset override > global advanced panel > global preset
+  getSettingsForFile: (fileId) => {
+    const { files, preset, useAdvanced, advancedSettings } = get()
+    const file = files.find(f => f.id === fileId)
+    if (!file) return { ...advancedSettings }
+
+    let baseSettings
+    if (file.presetOverride) {
+      // Per-file override always wins
+      baseSettings = PRESETS.find(p => p.id === file.presetOverride)?.settings ?? PRESETS[1].settings
+    } else if (useAdvanced) {
+      // Advanced panel active — use its settings
+      baseSettings = advancedSettings
+    } else {
+      // Global preset
+      baseSettings = PRESETS.find(p => p.id === preset)?.settings ?? PRESETS[1].settings
+    }
+
+    // Always merge outputName so rename works regardless of settings source
+    return { ...baseSettings, outputName: file.outputName ?? null }
   },
 }))
 

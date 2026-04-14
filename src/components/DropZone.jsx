@@ -2,117 +2,146 @@ import { useCallback, useState, useRef } from 'react'
 
 const ACCEPTED = '.jpg,.jpeg,.png,.webp,.avif,image/*'
 
-export default function DropZone({ onFiles, hasFiles = false }) {
+export default function DropZone({ onFiles, hasFiles = false, compressing = false }) {
   const [dragging, setDragging] = useState(false)
   const inputRef    = useRef(null)
   const dragCounter = useRef(0)
 
   const handleFiles = useCallback((fileList) => {
-  const file = fileList?.[0]
-  if (!file || !file.type.startsWith('image/')) return
-  onFiles([file]) // only one file
-}, [onFiles])
+    const files = Array.from(fileList).filter(f => f.type.startsWith('image/'))
+    if (files.length) onFiles(files)
+  }, [onFiles])
 
-  const onDragEnter = useCallback((e) => { e.preventDefault(); dragCounter.current++; setDragging(true) }, [])
-  const onDragLeave = useCallback((e) => { e.preventDefault(); dragCounter.current--; if (dragCounter.current === 0) setDragging(false) }, [])
-  const onDragOver  = useCallback((e) => { e.preventDefault() }, [])
-  const onDrop      = useCallback((e) => { e.preventDefault(); dragCounter.current = 0; setDragging(false); handleFiles(e.dataTransfer.files) }, [handleFiles])
+  const onDragEnter   = useCallback((e) => { e.preventDefault(); dragCounter.current++; setDragging(true) }, [])
+  const onDragLeave   = useCallback((e) => { e.preventDefault(); dragCounter.current--; if (dragCounter.current === 0) setDragging(false) }, [])
+  const onDragOver    = useCallback((e) => { e.preventDefault() }, [])
+  const onDrop        = useCallback((e) => { e.preventDefault(); dragCounter.current = 0; setDragging(false); handleFiles(e.dataTransfer.files) }, [handleFiles])
   const onInputChange = useCallback((e) => { handleFiles(e.target.files); e.target.value = '' }, [handleFiles])
 
-  // Compact strip when files are already present
   if (hasFiles) {
     return (
       <div
-        onDragEnter={onDragEnter}
-        onDragLeave={onDragLeave}
-        onDragOver={onDragOver}
-        onDrop={onDrop}
+        onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={onDragOver} onDrop={onDrop}
         onClick={() => inputRef.current?.click()}
-        className={[
-          'flex items-center gap-3 px-4 py-3 rounded-xl border-2 border-dashed cursor-pointer',
-          'transition-all duration-150 select-none',
-          dragging ? 'border-blue-400 bg-blue-50' : 'border-zinc-200 hover:border-blue-300 bg-white',
-        ].join(' ')}
-      >
-        <input ref={inputRef} type="file" accept={ACCEPTED} onChange={onInputChange} className="sr-only" />
+        className="flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer select-none transition-all duration-200"
+        style={{
+          border: `1.5px dashed ${dragging ? '#4CAF50' : '#D9D9D9'}`,
+          background: dragging ? 'rgba(76,175,80,0.05)' : 'rgba(245,241,232,0.6)',
+        }}>
+        <input ref={inputRef} type="file" multiple accept={ACCEPTED} onChange={onInputChange} className="sr-only" />
         <SmallTreeIcon />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-zinc-800 leading-tight">
-            {dragging ? 'Replace image' : 'Upload new image'}
+          <p className="text-sm font-medium" style={{ color: '#2A2A2A' }}>
+            {dragging ? 'Drop to add' : 'Add more images'}
           </p>
-          <p className="text-xs text-zinc-400 mt-0.5">PNG, JPG, WebP, AVIF — up to 50 MB</p>
+          <p className="text-xs mt-0.5" style={{ color: '#6B4F3A' }}>PNG, JPG, WebP, AVIF — up to 100 MB</p>
         </div>
-        <span className="flex-shrink-0 text-[11px] font-medium text-blue-500 border border-blue-200 bg-blue-50 px-2.5 py-1 rounded-lg">
+        <span className="flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+          style={{ background: '#1F3D2B', color: '#F5F1E8' }}>
           Browse
         </span>
       </div>
     )
   }
 
-  // Full drop zone
   return (
     <div
-      onDragEnter={onDragEnter}
-      onDragLeave={onDragLeave}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
+      onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={onDragOver} onDrop={onDrop}
       onClick={() => inputRef.current?.click()}
-      className={[
-        'relative flex flex-col items-center justify-center gap-3',
-        'rounded-xl border-2 border-dashed px-6 py-14 cursor-pointer',
-        'transition-all duration-150 select-none',
-        dragging
-          ? 'border-blue-400 bg-blue-50'
-          : 'border-zinc-200 hover:border-blue-300 hover:bg-blue-50/40 bg-white',
-      ].join(' ')}
-    >
-      <input ref={inputRef} type="file" accept={ACCEPTED} onChange={onInputChange} className="sr-only" />
+      className="relative flex flex-col items-center justify-center gap-5 px-6 py-14 rounded-2xl cursor-pointer select-none transition-all duration-300"
+      style={{
+        border: `2px dashed ${dragging ? '#4CAF50' : '#D9D9D9'}`,
+        background: dragging
+          ? 'rgba(76,175,80,0.06)'
+          : 'linear-gradient(160deg, rgba(245,241,232,0.8) 0%, rgba(255,255,255,0.95) 100%)',
+      }}>
+      <input ref={inputRef} type="file" multiple accept={ACCEPTED} onChange={onInputChange} className="sr-only" />
 
-      <TreeIcon dragging={dragging} />
+      {/* Animated bonsai tree */}
+      <BonsaiAnimation dragging={dragging} compressing={compressing} />
 
       <div className="text-center">
-        <p className="text-sm font-medium text-zinc-800">
-          {dragging ? 'Drop image here' : 'Drop an image here'}
+        <p className="text-base font-semibold" style={{ color: '#1F3D2B' }}>
+          {dragging ? 'Release to upload' : 'Drop your images here'}
         </p>
-        <p className="text-xs text-zinc-400 mt-0.5">PNG, JPG, WebP, AVIF — up to 50 MB</p>
+        <p className="text-sm mt-1" style={{ color: '#6B4F3A' }}>Trim the size. Keep the quality.</p>
+        <p className="text-xs mt-0.5" style={{ color: '#D9D9D9' }}>PNG, JPG, WebP, AVIF — up to 100 MB each</p>
       </div>
 
       <button
         type="button"
-        onClick={(e) => { e.stopPropagation(); inputRef.current?.click() }}
-        className="mt-1 px-4 py-1.5 rounded-lg text-xs font-medium border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
-      >
+        onClick={e => { e.stopPropagation(); inputRef.current?.click() }}
+        className="px-5 py-2 rounded-xl text-sm font-semibold transition-all duration-150 active:scale-[0.98]"
+        style={{ background: '#1F3D2B', color: '#F5F1E8' }}>
         Browse files
       </button>
     </div>
   )
 }
 
-function TreeIcon({ dragging }) {
+function BonsaiAnimation({ dragging}) {
   return (
-    <svg width="52" height="52" viewBox="0 0 52 52" fill="none" aria-hidden="true"
-      className={`transition-transform duration-200 ${dragging ? 'scale-110' : ''}`}
-    >
-      <path d="M26 44 L26 34" stroke="#378ADD" strokeWidth="2.2" strokeLinecap="round" />
-      <path d="M20 44 L32 44" stroke="#378ADD" strokeWidth="2.2" strokeLinecap="round" />
-      <path d="M26 34 C26 34 15 30 15 21 C15 15 19.9 11 26 11 C32.1 11 37 15 37 21 C37 30 26 34 26 34Z"
-        fill="#EFF6FF" stroke="#378ADD" strokeWidth="1.8" strokeLinejoin="round" />
-      <path d="M26 34 C26 34 19 27 19.5 20" stroke="#378ADD" strokeWidth="1.3" strokeLinecap="round" opacity="0.55" />
-      <path d="M26 34 C26 34 33 27 32.5 19" stroke="#378ADD" strokeWidth="1.3" strokeLinecap="round" opacity="0.55" />
-      <path d="M26 28 C26 28 21.5 23 22 17" stroke="#93C5FD" strokeWidth="1" strokeLinecap="round" opacity="0.7" />
-      <path d="M26 28 C26 28 30.5 23 30 17" stroke="#93C5FD" strokeWidth="1" strokeLinecap="round" opacity="0.7" />
-      <circle cx="26" cy="11" r="2.5" fill="#378ADD" />
-    </svg>
+    <div className="relative" style={{ width: 80, height: 90 }}>
+      <svg width="80" height="90" viewBox="0 0 80 90" fill="none" aria-hidden="true">
+        {/* Pot */}
+        <rect x="28" y="76" width="24" height="8" rx="2" fill="#6B4F3A" opacity="0.6" />
+        <rect x="25" y="72" width="30" height="6" rx="2" fill="#6B4F3A" opacity="0.4" />
+
+        {/* Trunk */}
+        <path d="M40 72 L40 58" stroke="#6B4F3A" strokeWidth="3" strokeLinecap="round" />
+
+        {/* Main branches */}
+        <path d="M40 64 L30 54" stroke="#6B4F3A" strokeWidth="2" strokeLinecap="round" />
+        <path d="M40 60 L50 50" stroke="#6B4F3A" strokeWidth="2" strokeLinecap="round" />
+        <path d="M40 58 L35 46" stroke="#6B4F3A" strokeWidth="1.5" strokeLinecap="round" />
+
+        {/* Leaf clusters — animate on drag/compress */}
+        <g style={{ transition: 'opacity 0.4s, transform 0.4s', opacity: dragging ? 1 : 0.85 }}>
+          {/* Main top cluster */}
+          <ellipse cx="40" cy="34" rx="16" ry="12" fill="#4CAF50" opacity="0.25" />
+          <ellipse cx="40" cy="34" rx="12" ry="9" fill="#4CAF50" opacity="0.35" />
+          {/* Left cluster */}
+          <ellipse cx="26" cy="46" rx="10" ry="8" fill="#4CAF50" opacity="0.3" />
+          <ellipse cx="26" cy="46" rx="7" ry="5.5" fill="#4CAF50" opacity="0.4" />
+          {/* Right cluster */}
+          <ellipse cx="54" cy="42" rx="10" ry="8" fill="#4CAF50" opacity="0.3" />
+          <ellipse cx="54" cy="42" rx="7" ry="5.5" fill="#4CAF50" opacity="0.4" />
+          {/* Top accent */}
+          <ellipse cx="40" cy="22" rx="8" ry="6" fill="#4CAF50" opacity="0.5" />
+        </g>
+
+        {/* Falling leaves when dragging */}
+        {dragging && <>
+          <circle cx="18" cy="52" r="3" fill="#4CAF50" opacity="0.6"
+            style={{ animation: 'bonsai-fall 1.2s ease-in-out infinite' }} />
+          <circle cx="62" cy="56" r="2.5" fill="#4CAF50" opacity="0.5"
+            style={{ animation: 'bonsai-fall 1.5s ease-in-out 0.3s infinite' }} />
+          <circle cx="22" cy="65" r="2" fill="#4CAF50" opacity="0.4"
+            style={{ animation: 'bonsai-fall 1.8s ease-in-out 0.6s infinite' }} />
+        </>}
+      </svg>
+
+      <style>{`
+        @keyframes bonsai-fall {
+          0%   { transform: translateY(0) rotate(0deg); opacity: 0.6; }
+          100% { transform: translateY(20px) rotate(30deg); opacity: 0; }
+        }
+        @keyframes bonsai-sway {
+          0%, 100% { transform: rotate(-1deg); }
+          50%       { transform: rotate(1deg); }
+        }
+      `}</style>
+    </div>
   )
 }
 
 function SmallTreeIcon() {
   return (
-    <svg width="22" height="22" viewBox="0 0 52 52" fill="none" aria-hidden="true">
-      <path d="M26 44 L26 34" stroke="#378ADD" strokeWidth="2.2" strokeLinecap="round" />
-      <path d="M20 44 L32 44" stroke="#378ADD" strokeWidth="2.2" strokeLinecap="round" />
-      <path d="M26 34 C26 34 15 30 15 21 C15 15 19.9 11 26 11 C32.1 11 37 15 37 21 C37 30 26 34 26 34Z"
-        fill="#EFF6FF" stroke="#378ADD" strokeWidth="1.8" strokeLinejoin="round" />
+    <svg width="24" height="24" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+      <path d="M20 36 L20 27" stroke="#6B4F3A" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M16 36 L24 36" stroke="#6B4F3A" strokeWidth="2.5" strokeLinecap="round" />
+      <ellipse cx="20" cy="18" rx="11" ry="9" fill="#4CAF50" opacity="0.25" />
+      <ellipse cx="20" cy="18" rx="8" ry="6.5" fill="#4CAF50" opacity="0.4" />
     </svg>
   )
 }
