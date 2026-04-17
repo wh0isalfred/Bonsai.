@@ -1,1 +1,27 @@
 @import "tailwindcss";
+
+.leaf {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: #1F3D2B;
+  border-radius: 50% 0 50% 50%;
+  opacity: 0;
+  transform: translateY(-6px) rotate(0deg);
+  transition: all 0.4s ease;
+}
+
+.group:hover .leaf {
+  opacity: 0.6;
+  transform: translateY(10px) rotate(45deg);
+}
+
+.leaf-1 {
+  left: 30%;
+  transition-delay: 0.05s;
+}
+
+.leaf-2 {
+  left: 60%;
+  transition-delay: 0.1s;
+}
