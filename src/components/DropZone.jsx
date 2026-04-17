@@ -65,7 +65,7 @@ export default function DropZone({ onFiles, hasFiles = false, compressing = fals
           {dragging ? 'Release to upload' : 'Drop your images here'}
         </p>
         <p className="text-sm mt-1" style={{ color: '#6B4F3A' }}>Trim the size. Keep the quality.</p>
-        <p className="text-xs mt-0.5" style={{ color: '#D9D9D9' }}>PNG, JPG, WebP, AVIF — up to 100 MB each</p>
+        <p className="text-xs mt-0.5" style={{ color: '#c0bebe' }}>PNG, JPG, WebP, AVIF — up to 100 MB each</p>
       </div>
 
       <button

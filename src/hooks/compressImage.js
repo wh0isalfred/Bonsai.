@@ -2,7 +2,6 @@ const SUPPORTED_TYPES = new Set([
   'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/avif',
 ])
 
-// ─── Format → extension map ───────────────────────────────────────────────────
 export const MIME_TO_EXT = {
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
@@ -10,27 +9,22 @@ export const MIME_TO_EXT = {
   'image/avif': 'avif',
 }
 
-// ─── Format compatibility rules ───────────────────────────────────────────────
-// Given a preset quality level, which output formats make sense?
-// PNG ignores quality — at low quality settings PNG is always much larger than
-// lossy formats, so we block it rather than silently produce a bad result.
+// ─── Format compatibility ─────────────────────────────────────────────────────
 export const FORMAT_COMPAT = {
-  // { outputFormat: { minQuality, losslessOnly, reason } }
-  jpeg: { minQuality: 0,    losslessOnly: false, reason: null },
-  webp: { minQuality: 0,    losslessOnly: false, reason: null },
-  png:  { minQuality: 0.75, losslessOnly: true,  reason: 'PNG is lossless — use with Low compression or Lossless mode only' },
-  avif: { minQuality: 0,    losslessOnly: false, reason: null },
-  auto: { minQuality: 0,    losslessOnly: false, reason: null },
-  original: { minQuality: 0, losslessOnly: false, reason: null },
+  jpeg:     { minQuality: 0,    losslessOk: false },
+  webp:     { minQuality: 0,    losslessOk: true  },
+  png:      { minQuality: 0,    losslessOk: true  },
+  avif:     { minQuality: 0,    losslessOk: false },
+  auto:     { minQuality: 0,    losslessOk: true  },
+  original: { minQuality: 0,    losslessOk: true  },
 }
 
-// Returns a warning string if the combination is problematic, null if OK.
 export function validateFormatSettings(outputFormat, quality, mode) {
-  if (outputFormat === 'png' && mode === 'lossy' && quality < 0.75) {
-    return 'PNG is lossless — quality setting is ignored and the output will be large. Switch to WebP or use Lossless mode.'
+  if (mode === 'lossless' && (outputFormat === 'jpeg' || outputFormat === 'avif')) {
+    return 'JPEG and AVIF do not support lossless encoding. Switch to WebP, PNG, or Auto.'
   }
   if (outputFormat === 'png' && mode === 'lossy') {
-    return 'PNG ignores quality settings. For smaller files use WebP or JPEG instead.'
+    return 'PNG is always lossless — the quality slider has no effect. Switch to WebP or JPEG for smaller files.'
   }
   return null
 }
@@ -68,7 +62,7 @@ function detectTransparency(img) {
   return false
 }
 
-// ─── Browser format support detection ────────────────────────────────────────
+// ─── Browser format support ───────────────────────────────────────────────────
 const _fmtCache = {}
 async function browserSupports(mime) {
   if (_fmtCache[mime] !== undefined) return _fmtCache[mime]
@@ -77,48 +71,46 @@ async function browserSupports(mime) {
     c.width = c.height = 4
     const blob = await canvasToBlob(c, mime, 0.5)
     _fmtCache[mime] = !!(blob && blob.size > 0 && blob.type === mime)
-  } catch {
-    _fmtCache[mime] = false
-  }
+  } catch { _fmtCache[mime] = false }
   return _fmtCache[mime]
 }
 
 // ─── Resolve output MIME ──────────────────────────────────────────────────────
-// Format option takes FULL priority. Mode only affects auto selection.
 async function resolveOutputMime(fileType, outputFormat, mode, hasAlpha) {
-  // Explicit format choices always win
   switch (outputFormat) {
     case 'jpeg':     return 'image/jpeg'
     case 'png':      return 'image/png'
     case 'webp':     return 'image/webp'
     case 'original': return fileType === 'image/jpg' ? 'image/jpeg' : (fileType || 'image/jpeg')
     case 'avif': {
-      const supported = await browserSupports('image/avif')
-      return supported ? 'image/avif' : 'image/webp'
+      const ok = await browserSupports('image/avif')
+      return ok ? 'image/avif' : 'image/webp'
     }
   }
-
-  // 'auto' — smart selection based on mode and content
-  if (mode === 'lossless') {
-    // Lossless: PNG for images with alpha, WebP-lossless (quality=1) for everything else
-    return hasAlpha ? 'image/png' : 'image/webp'
-  }
-
-  // Lossy auto: WebP is the best default — smaller than JPEG, supports alpha
+  // auto
+  if (mode === 'lossless') return hasAlpha ? 'image/png' : 'image/webp'
   return 'image/webp'
 }
 
 // ─── Resolve quality ──────────────────────────────────────────────────────────
-// This is the key function that makes lossless actually work.
+// LOSSLESS STRATEGY:
+// - PNG:  quality is irrelevant — PNG is always lossless by spec. Pass undefined.
+// - WebP: quality=1.0 triggers WebP's lossless encoder in the Canvas API.
+// - JPEG: no true lossless, so we use near-lossless (0.97) — best possible without
+//         format change. This is better than WebP-lossless which would be bigger.
+// - AVIF: no lossless via Canvas, so we use 0.95 as near-lossless equivalent.
+//
+// LOSSY: use the quality setting directly.
 function resolveQuality(outputMime, mode, qualitySetting) {
-  // PNG ignores quality entirely — passing undefined tells the browser not to apply it
-  if (outputMime === 'image/png') return undefined
+  if (outputMime === 'image/png') return undefined  // PNG ignores quality
 
-  // Lossless mode: WebP at quality=1.0 activates its lossless encoder
-  // (This is a specific quirk of the Canvas API — quality=1.0 for WebP = lossless)
-  if (mode === 'lossless') return 1.0
+  if (mode === 'lossless') {
+    if (outputMime === 'image/webp')  return 1.0   // triggers WebP lossless encoder
+    if (outputMime === 'image/jpeg')  return 0.97  // near-lossless, no format change
+    if (outputMime === 'image/avif')  return 0.95  // best achievable with Canvas AVIF
+    return 1.0
+  }
 
-  // Lossy: use the quality setting
   return qualitySetting ?? 0.80
 }
 
@@ -138,7 +130,6 @@ function resolveDimensions(img, settings) {
   let ow = img.naturalWidth
   let oh = img.naturalHeight
 
-  // DPI rescale — treats source as 300dpi, rescales to target dpi
   if (dpiMode !== 'keep') {
     const dpiRatio = Number(dpiMode) / 300
     ow = Math.max(1, Math.round(ow * dpiRatio))
@@ -148,23 +139,18 @@ function resolveDimensions(img, settings) {
   let w = ow, h = oh
 
   if (resizeMode === 'maxDimension') {
-    const mw = maxWidth  || 1920
-    const mh = maxHeight || 1920
+    const mw = maxWidth || 1920, mh = maxHeight || 1920
     if (w > mw || h > mh) {
       const r = Math.min(mw / w, mh / h)
-      w = Math.round(w * r)
-      h = Math.round(h * r)
+      w = Math.round(w * r); h = Math.round(h * r)
     }
   } else if (resizeMode === 'exact') {
-    w = exactWidth  || 800
-    h = exactHeight || 600
+    w = exactWidth || 800; h = exactHeight || 600
   } else if (resizeMode === 'percentage') {
     const f = Math.max(1, scalePercent) / 100
-    w = Math.round(ow * f)
-    h = Math.round(oh * f)
+    w = Math.round(ow * f); h = Math.round(oh * f)
   }
 
-  // Never upscale beyond natural dimensions
   if (preventUpscale) {
     if (w > img.naturalWidth)  w = img.naturalWidth
     if (h > img.naturalHeight) h = img.naturalHeight
@@ -174,7 +160,6 @@ function resolveDimensions(img, settings) {
 }
 
 // ─── Canvas helpers ───────────────────────────────────────────────────────────
-
 function makeCanvas(w, h) {
   const c = document.createElement('canvas')
   c.width = w; c.height = h
@@ -182,8 +167,7 @@ function makeCanvas(w, h) {
 }
 
 function drawContain(img, w, h) {
-  const c   = makeCanvas(w, h)
-  const ctx = c.getContext('2d')
+  const c = makeCanvas(w, h), ctx = c.getContext('2d')
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(img, 0, 0, w, h)
@@ -191,39 +175,31 @@ function drawContain(img, w, h) {
 }
 
 function drawCover(img, w, h) {
-  const c    = makeCanvas(w, h)
-  const ctx  = c.getContext('2d')
+  const c = makeCanvas(w, h), ctx = c.getContext('2d')
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight)
-  const sw    = w / scale
-  const sh    = h / scale
-  const sx    = (img.naturalWidth  - sw) / 2
-  const sy    = (img.naturalHeight - sh) / 2
+  const sw = w / scale, sh = h / scale
+  const sx = (img.naturalWidth  - sw) / 2
+  const sy = (img.naturalHeight - sh) / 2
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h)
   return c
 }
 
-// Flatten transparent areas onto a solid background color.
-// JPEG has no alpha channel — this MUST run for every JPEG output.
 function flattenOntoBackground(source, fillColor = '#ffffff') {
-  const c   = makeCanvas(source.width, source.height)
-  const ctx = c.getContext('2d')
+  const c = makeCanvas(source.width, source.height), ctx = c.getContext('2d')
   ctx.fillStyle = fillColor
   ctx.fillRect(0, 0, c.width, c.height)
   ctx.drawImage(source, 0, 0)
   return c
 }
 
-// Blur without edge darkening — draw oversized, blur, then crop back.
 function applyBlur(canvas, radius) {
   if (!radius || radius <= 0) return canvas
-  const pad = Math.ceil(radius * 2)
-  const big = makeCanvas(canvas.width + pad * 2, canvas.height + pad * 2)
+  const pad  = Math.ceil(radius * 2)
+  const big  = makeCanvas(canvas.width + pad * 2, canvas.height + pad * 2)
   const bctx = big.getContext('2d')
-  // Draw source 4 times mirrored to fill padding (avoids dark edges)
   bctx.drawImage(canvas, pad, pad)
-  // Fill edges with edge pixels using drawImage of the source with clip
   bctx.filter = `blur(${radius}px)`
   const out  = makeCanvas(canvas.width, canvas.height)
   const octx = out.getContext('2d')
@@ -233,19 +209,13 @@ function applyBlur(canvas, radius) {
 
 function applySharpen(canvas, amount) {
   if (!amount || amount <= 0) return canvas
-  // True unsharp mask via pixel manipulation
-  const w   = canvas.width, h = canvas.height
-  const src = canvas.getContext('2d').getImageData(0, 0, w, h)
-  const out = makeCanvas(w, h)
-  const ctx = out.getContext('2d')
-
-  // Blur a copy for the mask
+  const w = canvas.width, h = canvas.height
+  const src  = canvas.getContext('2d').getImageData(0, 0, w, h)
+  const out  = makeCanvas(w, h), ctx = out.getContext('2d')
   const blurC = applyBlur(canvas, 1.5)
   const blurD = blurC.getContext('2d').getImageData(0, 0, w, h)
-
   const result = ctx.createImageData(w, h)
-  const factor = amount * 1.5  // tunable strength
-
+  const factor = amount * 1.5
   for (let i = 0; i < src.data.length; i += 4) {
     for (let c = 0; c < 3; c++) {
       const idx = i + c
@@ -253,39 +223,38 @@ function applySharpen(canvas, amount) {
         src.data[idx] + factor * (src.data[idx] - blurD.data[idx])
       ))
     }
-    result.data[i + 3] = src.data[i + 3] // preserve alpha
+    result.data[i + 3] = src.data[i + 3]
   }
-
   ctx.putImageData(result, 0, 0)
   return out
 }
 
-function applyWatermark(canvas, settings) {
-  const { watermarkText, watermarkOpacity = 0.4, watermarkPosition = 'bottomRight', watermarkSize = 16 } = settings
-  if (!watermarkText?.trim()) return canvas
-
+// ─── Bonsai brand watermark ───────────────────────────────────────────────────
+// Fixed brand mark — always bottom-right, semi-transparent, professional.
+// Not user-configurable. Size scales with image dimensions.
+function applyBonsaiWatermark(canvas) {
   const ctx = canvas.getContext('2d')
+
+  // Scale font size relative to image width: 1.2% of width, min 11px, max 22px
+  const fontSize = Math.max(11, Math.min(22, Math.round(canvas.width * 0.012)))
+  const pad = Math.max(10, Math.round(canvas.width * 0.018))
+
   ctx.save()
-  ctx.globalAlpha   = Math.max(0.05, Math.min(1, watermarkOpacity))
-  ctx.font          = `bold ${watermarkSize}px system-ui, sans-serif`
+  ctx.globalAlpha   = 0.18           // very subtle — professional, not intrusive
+  ctx.font          = `600 ${fontSize}px system-ui, -apple-system, sans-serif`
+  ctx.letterSpacing = '0.04em'
   ctx.fillStyle     = '#ffffff'
-  ctx.shadowColor   = 'rgba(0,0,0,0.7)'
-  ctx.shadowBlur    = 6
-  ctx.shadowOffsetX = 1
+  ctx.shadowColor   = 'rgba(0,0,0,0.5)'
+  ctx.shadowBlur    = 3
+  ctx.shadowOffsetX = 0
   ctx.shadowOffsetY = 1
 
-  const tw  = ctx.measureText(watermarkText).width
-  const pad = Math.max(14, watermarkSize * 0.8)
+  const text = 'Bonsai'
+  const tw   = ctx.measureText(text).width
+  const x    = canvas.width  - tw - pad
+  const y    = canvas.height - pad
 
-  const posMap = {
-    topLeft:     [pad, pad + watermarkSize],
-    topRight:    [canvas.width - tw - pad, pad + watermarkSize],
-    bottomLeft:  [pad, canvas.height - pad],
-    bottomRight: [canvas.width - tw - pad, canvas.height - pad],
-    center:      [(canvas.width - tw) / 2, (canvas.height + watermarkSize) / 2],
-  }
-  const [x, y] = posMap[watermarkPosition] ?? posMap.bottomRight
-  ctx.fillText(watermarkText, x, y)
+  ctx.fillText(text, x, y)
   ctx.restore()
   return canvas
 }
@@ -313,9 +282,7 @@ async function stripExif(blob) {
 
 // ─── Binary search quality ────────────────────────────────────────────────────
 async function binarySearchQuality(canvas, mime, targetBytes, startQuality) {
-  // Don't binary-search PNG — it ignores quality anyway
   if (mime === 'image/png') return canvasToBlob(canvas, mime)
-
   let lo = 0.05, hi = Math.min(startQuality, 0.99), best = null
   for (let i = 0; i < 12; i++) {
     const mid  = (lo + hi) / 2
@@ -328,51 +295,48 @@ async function binarySearchQuality(canvas, mime, targetBytes, startQuality) {
 }
 
 // ─── Core encode ─────────────────────────────────────────────────────────────
-// Returns { blob, outputMime, width, height }
 export async function encode(img, file, settings, hasAlpha) {
   const {
-    mode            = 'lossy',
-    outputFormat    = 'auto',
-    quality         = 0.80,
-    resizeCropMode  = 'contain',
-    blurRadius      = 0,
-    sharpenAmount   = 0,
-    fillColor       = '#ffffff',
-    stripMetadata   = true,
-    targetSizeKb    = 0,
+    mode           = 'lossy',
+    outputFormat   = 'auto',
+    quality        = 0.80,
+    resizeCropMode = 'contain',
+    blurRadius     = 0,
+    sharpenAmount  = 0,
+    fillColor      = '#ffffff',
+    stripMetadata  = true,
+    targetSizeKb   = 0,
   } = settings
 
   const { width, height } = resolveDimensions(img, settings)
   const outputMime        = await resolveOutputMime(file.type, outputFormat, mode, hasAlpha)
   const resolvedQuality   = resolveQuality(outputMime, mode, quality)
 
-  // ── Canvas pipeline ──────────────────────────────────────────────────────────
+  // Build canvas
   let canvas = resizeCropMode === 'cover'
     ? drawCover(img, width, height)
     : drawContain(img, width, height)
 
-  if (blurRadius   > 0) canvas = applyBlur(canvas, blurRadius)
+  if (blurRadius    > 0) canvas = applyBlur(canvas, blurRadius)
   if (sharpenAmount > 0) canvas = applySharpen(canvas, sharpenAmount)
-  canvas = applyWatermark(canvas, settings)
 
-  // JPEG has no alpha channel — ALWAYS flatten, regardless of preserveTransparency.
-  // preserveTransparency only matters for WebP/PNG format selection, not JPEG.
+  // Always apply Bonsai brand watermark
+  canvas = applyBonsaiWatermark(canvas)
+
+  // JPEG must flatten alpha
   const encodeCanvas = outputMime === 'image/jpeg'
     ? flattenOntoBackground(canvas, fillColor)
     : canvas
 
-  // ── Encode ───────────────────────────────────────────────────────────────────
+  // Encode
   let blob
-
   if (targetSizeKb > 0 && outputMime !== 'image/png') {
-    // Target size mode — binary search for best quality under ceiling
     blob = await binarySearchQuality(encodeCanvas, outputMime, targetSizeKb * 1024, resolvedQuality ?? 0.80)
   } else {
     blob = await canvasToBlob(encodeCanvas, outputMime, resolvedQuality)
   }
 
-  // For lossy modes with no target size, guarantee output < original
-  // Skip for lossless (user wants quality, not smallest file) and PNG (can't do lossy)
+  // Guarantee smaller than original for lossy only (never for lossless — it's intentional)
   if (
     targetSizeKb === 0 &&
     mode !== 'lossless' &&
@@ -382,7 +346,6 @@ export async function encode(img, file, settings, hasAlpha) {
     blob = await binarySearchQuality(encodeCanvas, outputMime, file.size - 1, resolvedQuality ?? 0.80)
   }
 
-  // Strip EXIF — JPEG only (WebP/PNG don't embed EXIF via Canvas)
   if (stripMetadata && outputMime === 'image/jpeg') {
     blob = await stripExif(blob)
   }
@@ -393,7 +356,7 @@ export async function encode(img, file, settings, hasAlpha) {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export async function compressImage(file, settings = {}, onProgress) {
-  if (!SUPPORTED_TYPES.has(file.type)) throw new Error(`Unsupported format: ${file.type || 'unknown'}`)
+  if (!SUPPORTED_TYPES.has(file.type)) throw new Error(`Unsupported: ${file.type || 'unknown'}`)
 
   onProgress?.(5)
   const img      = await loadImage(file)
@@ -427,6 +390,7 @@ export function validateFile(file) {
   return { valid: true }
 }
 
+// Always uses each preset's own settings — never polluted by advanced state
 export async function previewAllPresets(file, presets) {
   if (!SUPPORTED_TYPES.has(file.type)) return {}
   try {

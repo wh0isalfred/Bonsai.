@@ -1,12 +1,14 @@
 import { useCallback, useEffect } from 'react'
 import { useCompressionStore } from '../store/compressionStore'
 import { compressImage, previewAllPresets, validateFile, getImageInfo, encode } from './compressImage'
+import { useHistory } from './useHistory'
 import { PRESETS } from '../config/presets'
 import { nanoid } from 'nanoid'
 
 const CONCURRENCY = 3
 let _running = 0
 const _queue  = []
+let _addHistoryEntry = null
 
 async function processNext() {
   if (_running >= CONCURRENCY || _queue.length === 0) return
@@ -20,14 +22,14 @@ async function processNext() {
   store.updateFile(id, { status: 'compressing', progress: 0 })
 
   try {
-    const settings = store.getSettingsForFile(id)
-    const result   = await compressImage(entry.file, settings,
+    const settings    = store.getSettingsForFile(id)
+    const result      = await compressImage(
+      entry.file, settings,
       (pct) => useCompressionStore.getState().updateFile(id, { progress: pct })
     )
-    useCompressionStore.getState().updateFile(id, {
-      status: 'done', progress: 100,
-      result: { ...result, usedPreset: useCompressionStore.getState().preset },
-    })
+    const finalResult = { ...result, usedPreset: useCompressionStore.getState().preset }
+    useCompressionStore.getState().updateFile(id, { status: 'done', progress: 100, result: finalResult })
+    _addHistoryEntry?.(finalResult, entry)
   } catch (err) {
     useCompressionStore.getState().updateFile(id, { status: 'error', error: err.message })
   } finally {
@@ -41,49 +43,27 @@ function enqueue(ids) {
   for (let i = 0; i < CONCURRENCY; i++) processNext()
 }
 
-// Previews — when advanced is active, show the advanced settings preview
-// for all cards (they'll all show the same number since it's one config)
-// When preset mode, show per-preset numbers as usual.
+// ─── Preset previews ──────────────────────────────────────────────────────────
+// CRITICAL: Always uses each preset's own settings.
+// Advanced settings NEVER affect preset card sizes — they are independent.
+// The advanced estimated size is computed separately in SettingsPanel via encode().
 async function runPreviews(file, generation) {
   const store = useCompressionStore.getState()
 
-  PRESETS.forEach(p => store.updatePreview(p.id, { size: null, loading: true }))
+  // Mark all as loading
+  PRESETS.forEach(p => store.updatePreview(p.id, { size: null, loading: true, isAdvanced: false }))
 
-  const { useAdvanced, advancedSettings } = store
+  // Always compute per-preset — never check useAdvanced
+  const sizeMap = await previewAllPresets(file, PRESETS)
 
-  if (useAdvanced) {
-    // Advanced mode — calculate once for the advanced config
-    try {
-      const { default: _ } = await Promise.resolve() // yield to UI
-      const img      = await (async () => {
-        const { loadImage, detectTransparency } = await getHelpers()
-        const i = await loadImage(file)
-        return { img: i, hasAlpha: detectTransparency(i) }
-      })()
-      // encode once with advanced settings
-      const { blob } = await encode(img.img, file, advancedSettings, img.hasAlpha)
-      const size = blob.size
-      // Check still valid
-      if (useCompressionStore.getState().previewGeneration !== generation) return
-      // Show the same size on all preset cards with a note
-      PRESETS.forEach(p => useCompressionStore.getState().updatePreview(p.id, { size, loading: false, isAdvanced: true }))
-    } catch {
-      PRESETS.forEach(p => useCompressionStore.getState().updatePreview(p.id, { size: null, loading: false }))
-    }
-  } else {
-    // Preset mode — calculate per-preset
-    const sizeMap = await previewAllPresets(file, PRESETS)
-    if (useCompressionStore.getState().previewGeneration !== generation) return
-    PRESETS.forEach(p => useCompressionStore.getState().updatePreview(p.id, {
-      size: sizeMap[p.id] ?? null, loading: false, isAdvanced: false,
-    }))
-  }
-}
+  // Check still valid (user may have uploaded a new file)
+  if (useCompressionStore.getState().previewGeneration !== generation) return
 
-// Lazy-load internal helpers from compressImage without circular dep
-async function getHelpers() {
-  const mod = await import('./compressImage')
-  return mod
+  PRESETS.forEach(p => useCompressionStore.getState().updatePreview(p.id, {
+    size:       sizeMap[p.id] ?? null,
+    loading:    false,
+    isAdvanced: false,
+  }))
 }
 
 async function loadInfoForFiles(entries) {
@@ -95,20 +75,23 @@ async function loadInfoForFiles(entries) {
 }
 
 export function useImageCompress() {
-  const files              = useCompressionStore(s => s.files)
-  const preset             = useCompressionStore(s => s.preset)
-  const previews           = useCompressionStore(s => s.previews)
-  const useAdvanced        = useCompressionStore(s => s.useAdvanced)
-  const advancedSettings   = useCompressionStore(s => s.advancedSettings)
-  const setPreset          = useCompressionStore(s => s.setPreset)
+  const files               = useCompressionStore(s => s.files)
+  const preset              = useCompressionStore(s => s.preset)
+  const previews            = useCompressionStore(s => s.previews)
+  const useAdvanced         = useCompressionStore(s => s.useAdvanced)
+  const advancedSettings    = useCompressionStore(s => s.advancedSettings)
+  const setPreset           = useCompressionStore(s => s.setPreset)
   const setAdvancedSettings = useCompressionStore(s => s.setAdvancedSettings)
-  const resetAdvanced      = useCompressionStore(s => s.resetAdvancedSettings)
-  const addFilesStore      = useCompressionStore(s => s.addFiles)
-  const replaceFilesStore  = useCompressionStore(s => s.replaceFiles)
-  const removeFile         = useCompressionStore(s => s.removeFile)
-  const clearFiles         = useCompressionStore(s => s.clearFiles)
-  const setFileOutputName  = useCompressionStore(s => s.setFileOutputName)
+  const resetAdvanced       = useCompressionStore(s => s.resetAdvancedSettings)
+  const addFilesStore       = useCompressionStore(s => s.addFiles)
+  const replaceFilesStore   = useCompressionStore(s => s.replaceFiles)
+  const removeFile          = useCompressionStore(s => s.removeFile)
+  const clearFiles          = useCompressionStore(s => s.clearFiles)
+  const setFileOutputName   = useCompressionStore(s => s.setFileOutputName)
   const setFilePresetOverride = useCompressionStore(s => s.setFilePresetOverride)
+
+  const { entries: historyEntries, addEntry, clearHistory } = useHistory()
+  useEffect(() => { _addHistoryEntry = addEntry }, [addEntry])
 
   const buildEntries = useCallback((rawFiles) => {
     const entries = [], valid = []
@@ -144,19 +127,10 @@ export function useImageCompress() {
     kickPreviews(valid)
   }, [buildEntries, replaceFilesStore, kickPreviews])
 
-  // When advanced settings change, re-run previews against new config
-  const setAdvancedSettingsAndPreview = useCallback((patch) => {
+  // When advanced settings change, do NOT re-run preset previews.
+  // The advanced estimated size is handled entirely in SettingsPanel's useEstimatedSize hook.
+  const setAdvancedSettingsAndUpdate = useCallback((patch) => {
     setAdvancedSettings(patch)
-    const { files } = useCompressionStore.getState()
-    const firstFile = files.find(f => f.file)
-    if (firstFile) {
-      const gen = useCompressionStore.getState().previewGeneration
-      // Small debounce — avoid thrashing on slider drag
-      clearTimeout(window.__bonsai_preview_timer)
-      window.__bonsai_preview_timer = setTimeout(() => {
-        runPreviews(firstFile.file, gen)
-      }, 300)
-    }
   }, [setAdvancedSettings])
 
   const recompressAll = useCallback(() => {
@@ -216,7 +190,7 @@ export function useImageCompress() {
     } catch { return false }
   }, [])
 
-  // Page-level paste
+  // Clipboard paste
   useEffect(() => {
     const handle = (e) => {
       const items = e.clipboardData?.items
@@ -273,7 +247,7 @@ export function useImageCompress() {
   return {
     files, preset, previews, useAdvanced, advancedSettings,
     setPreset,
-    setAdvancedSettings: setAdvancedSettingsAndPreview,
+    setAdvancedSettings: setAdvancedSettingsAndUpdate,
     resetAdvanced,
     stageFiles, replaceWithFiles,
     compressAll, recompressAll,
@@ -283,6 +257,7 @@ export function useImageCompress() {
     copyToClipboard,
     setFileOutputName, setFilePresetOverride,
     hasIdle, hasAnyDone, allSettled, compressing,
+    historyEntries, clearHistory,
   }
 }
 
