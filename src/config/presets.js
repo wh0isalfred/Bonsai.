@@ -1,80 +1,129 @@
+/**
+ * src/config/presets.js
+ *
+ * Smart mode compression presets.
+ * Each preset maps to a settings object consumed by compression.worker.js.
+ *
+ * quality:        0–1   WebP/JPEG encode quality
+ * maxWidthPx:     cap longest dimension (0 = no resize)
+ * stripMetadata:  remove EXIF/ICC data
+ * outputFormat:   'webp' | 'jpeg' | 'png' | 'avif' | 'original'
+ * mode:           'lossy' | 'lossless'
+ * sharpenAmount:  0–5 (unsharp mask strength)
+ * blurRadius:     0–10 (pre-encode blur)
+ */
+
 export const PRESETS = [
   {
-    id:          'extreme',
-    label:       'Extreme',
-    description: 'Maximum size reduction.',
+    id:      'extreme',
+    label:   'Extreme',
+    sublabel:'Max reduction',
+    desc:    'Aggressive compression. Best for thumbnails, previews, email.',
+    qualityBar: 0.18, // visual only — width of quality indicator bar
     settings: {
-      mode: 'lossy', outputFormat: 'webp', quality: 0.45,
-      resizeMode: 'maxDimension', maxWidth: 1280, maxHeight: 1280,
-      preventUpscale: true, stripMetadata: true, preserveTransparency: true,
-      blurRadius: 0, sharpenAmount: 0, targetSizeKb: 0,
+      quality:       0.45,
+      outputFormat:  'webp',
+      mode:          'lossy',
+      maxWidthPx:    1600,
+      stripMetadata: true,
+      sharpenAmount: 0.6,
+      blurRadius:    0,
+      preventUpscale:true,
+      resizeMode:    'maxDimension',
+      maxWidth:      1600,
+      maxHeight:     1600,
     },
   },
   {
-    id:          'high',
-    label:       'High',
-    description: 'Great for web and sharing.',
+    id:      'high',
+    label:   'High',
+    sublabel:'Web optimised',
+    desc:    'Strong compression with good visual quality. Ideal for web delivery.',
+    qualityBar: 0.44,
     settings: {
-      mode: 'lossy', outputFormat: 'webp', quality: 0.65,
-      resizeMode: 'maxDimension', maxWidth: 1920, maxHeight: 1920,
-      preventUpscale: true, stripMetadata: true, preserveTransparency: true,
-      blurRadius: 0, sharpenAmount: 0, targetSizeKb: 0,
+      quality:       0.68,
+      outputFormat:  'webp',
+      mode:          'lossy',
+      maxWidthPx:    2400,
+      stripMetadata: true,
+      sharpenAmount: 0.4,
+      blurRadius:    0,
+      preventUpscale:true,
+      resizeMode:    'maxDimension',
+      maxWidth:      2400,
+      maxHeight:     2400,
     },
   },
   {
-    id:          'normal',
-    label:       'Normal',
-    description: 'Balanced quality and size.',
+    id:      'normal',
+    label:   'Normal',
+    sublabel:'Balanced',
+    desc:    'Good balance of file size and quality. All-purpose compression.',
+    qualityBar: 0.68,
     settings: {
-      mode: 'lossy', outputFormat: 'webp', quality: 0.80,
-      resizeMode: 'maxDimension', maxWidth: 2560, maxHeight: 2560,
-      preventUpscale: true, stripMetadata: true, preserveTransparency: true,
-      blurRadius: 0, sharpenAmount: 0, targetSizeKb: 0,
+      quality:       0.82,
+      outputFormat:  'webp',
+      mode:          'lossy',
+      maxWidthPx:    0,
+      stripMetadata: true,
+      sharpenAmount: 0.2,
+      blurRadius:    0,
+      preventUpscale:true,
+      resizeMode:    'none',
+      maxWidth:      0,
+      maxHeight:     0,
     },
   },
   {
-    id:          'low',
-    label:       'Low',
-    description: 'Minimal compression, sharp detail.',
+    id:      'low',
+    label:   'Low',
+    sublabel:'Near-lossless',
+    desc:    'Minimal reduction. Preserves fine detail, sharp edges, colour accuracy.',
+    qualityBar: 0.88,
     settings: {
-      mode: 'lossy', outputFormat: 'webp', quality: 0.88,
-      resizeMode: 'none', maxWidth: 4096, maxHeight: 4096,
-      preventUpscale: true, stripMetadata: true, preserveTransparency: true,
-      blurRadius: 0, sharpenAmount: 0, targetSizeKb: 0,
+      quality:       0.93,
+      outputFormat:  'webp',
+      mode:          'lossy',
+      maxWidthPx:    0,
+      stripMetadata: false,
+      sharpenAmount: 0,
+      blurRadius:    0,
+      preventUpscale:true,
+      resizeMode:    'none',
+      maxWidth:      0,
+      maxHeight:     0,
     },
   },
 ]
 
-export const DEFAULT_ADVANCED = {
-  // Format
-  outputFormat:    'webp',   // 'auto'|'webp'|'jpeg'|'png'|'avif'|'original'
-  mode:            'lossy',  // 'lossy'|'lossless'
-  quality:         0.80,
-  targetSizeKb:    0,
-
-  // Resize
-  resizeMode:      'none',   // 'none'|'maxDimension'|'exact'|'percentage'
-  maxWidth:        1920,
-  maxHeight:       1920,
-  exactWidth:      1280,
-  exactHeight:     720,
-  scalePercent:    50,
-  resizeCropMode:  'contain', // 'contain'|'cover'
-  preventUpscale:  true,
-  dpiMode:         'keep',   // 'keep'|'72'|'96'|'150'|'300'
-
-  // Metadata & transparency
-  stripMetadata:        true,
-  preserveTransparency: true,
-  fillColor:            '#ffffff',
-
-  // Post-processing
-  blurRadius:    0,
-  sharpenAmount: 0,
-
-  // Watermark
-  watermarkText:     '',
-  watermarkOpacity:  0.4,
-  watermarkPosition: 'bottomRight',
-  watermarkSize:     16,
+/**
+ * Default Pro mode settings — what the editor opens with.
+ * Users adjust from here.
+ */
+export const DEFAULT_PRO_SETTINGS = {
+  quality:          0.82,
+  outputFormat:     'webp',
+  mode:             'lossy',
+  resizeMode:       'none',
+  maxWidth:         1920,
+  maxHeight:        1920,
+  exactWidth:       800,
+  exactHeight:      600,
+  scalePercent:     100,
+  blurRadius:       0,
+  sharpenAmount:    0,
+  stripMetadata:    true,
+  preserveAlpha:    true,
+  fillColor:        '#ffffff',
+  preventUpscale:   true,
+  resizeCropMode:   'contain',
+  targetSizeKb:     0,       // 0 = no target, >0 = binary-search to hit size
 }
+
+export const getPresetById = (id) => PRESETS.find(p => p.id === id) ?? PRESETS[1]
+
+/**
+ * Alias — keeps imports consistent across the codebase.
+ * compressionStore.js and ProEditor.jsx both import DEFAULT_ADVANCED.
+ */
+export const DEFAULT_ADVANCED = DEFAULT_PRO_SETTINGS

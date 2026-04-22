@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { PRESETS } from '../config/presets'
-import { formatBytes } from '../hooks/formatBytes'
-import { validateFormatSettings, encode } from '../hooks/compressImage'
+import { PRESETS } from '../../config/presets'
+import { formatBytes } from '../../utils/formatBytes'
+import { validateFormatSettings, encode } from '../../lib/compressImage'
 
 // ─── Live estimated size ──────────────────────────────────────────────────────
 // Runs encode() with current advanced settings whenever they change (debounced).

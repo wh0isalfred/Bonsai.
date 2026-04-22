@@ -1,14 +1,13 @@
 import { useCallback, useEffect } from 'react'
 import { useCompressionStore } from '../store/compressionStore'
-import { compressImage, previewAllPresets, validateFile, getImageInfo, encode } from './compressImage'
-import { useHistory } from './useHistory'
+import { compressImage, previewAllPresets, validateFile, getImageInfo } from '../lib/compressImage'
 import { PRESETS } from '../config/presets'
 import { nanoid } from 'nanoid'
 
+// ─── Worker queue (module-level, survives re-renders) ─────────────────────────
 const CONCURRENCY = 3
 let _running = 0
 const _queue  = []
-let _addHistoryEntry = null
 
 async function processNext() {
   if (_running >= CONCURRENCY || _queue.length === 0) return
@@ -24,12 +23,15 @@ async function processNext() {
   try {
     const settings    = store.getSettingsForFile(id)
     const result      = await compressImage(
-      entry.file, settings,
+      entry.file,
+      settings,
       (pct) => useCompressionStore.getState().updateFile(id, { progress: pct })
     )
-    const finalResult = { ...result, usedPreset: useCompressionStore.getState().preset }
-    useCompressionStore.getState().updateFile(id, { status: 'done', progress: 100, result: finalResult })
-    _addHistoryEntry?.(finalResult, entry)
+    useCompressionStore.getState().updateFile(id, {
+      status:   'done',
+      progress: 100,
+      result:   { ...result, usedPreset: useCompressionStore.getState().preset },
+    })
   } catch (err) {
     useCompressionStore.getState().updateFile(id, { status: 'error', error: err.message })
   } finally {
@@ -43,20 +45,14 @@ function enqueue(ids) {
   for (let i = 0; i < CONCURRENCY; i++) processNext()
 }
 
-// ─── Preset previews ──────────────────────────────────────────────────────────
-// CRITICAL: Always uses each preset's own settings.
-// Advanced settings NEVER affect preset card sizes — they are independent.
-// The advanced estimated size is computed separately in SettingsPanel via encode().
+// ─── Preset size previews ─────────────────────────────────────────────────────
+// Always per-preset — never polluted by advanced settings state.
 async function runPreviews(file, generation) {
   const store = useCompressionStore.getState()
-
-  // Mark all as loading
   PRESETS.forEach(p => store.updatePreview(p.id, { size: null, loading: true, isAdvanced: false }))
 
-  // Always compute per-preset — never check useAdvanced
   const sizeMap = await previewAllPresets(file, PRESETS)
 
-  // Check still valid (user may have uploaded a new file)
   if (useCompressionStore.getState().previewGeneration !== generation) return
 
   PRESETS.forEach(p => useCompressionStore.getState().updatePreview(p.id, {
@@ -74,6 +70,7 @@ async function loadInfoForFiles(entries) {
   }
 }
 
+// ─── Hook ─────────────────────────────────────────────────────────────────────
 export function useImageCompress() {
   const files               = useCompressionStore(s => s.files)
   const preset              = useCompressionStore(s => s.preset)
@@ -88,10 +85,8 @@ export function useImageCompress() {
   const removeFile          = useCompressionStore(s => s.removeFile)
   const clearFiles          = useCompressionStore(s => s.clearFiles)
   const setFileOutputName   = useCompressionStore(s => s.setFileOutputName)
-  const setFilePresetOverride = useCompressionStore(s => s.setFilePresetOverride)
 
-  const { entries: historyEntries, addEntry, clearHistory } = useHistory()
-  useEffect(() => { _addHistoryEntry = addEntry }, [addEntry])
+  // ── File staging ─────────────────────────────────────────────────────────────
 
   const buildEntries = useCallback((rawFiles) => {
     const entries = [], valid = []
@@ -127,11 +122,13 @@ export function useImageCompress() {
     kickPreviews(valid)
   }, [buildEntries, replaceFilesStore, kickPreviews])
 
-  // When advanced settings change, do NOT re-run preset previews.
-  // The advanced estimated size is handled entirely in SettingsPanel's useEstimatedSize hook.
+  // Advanced settings change: update store only (no preview re-run here —
+  // SettingsPanel's useEstimatedSize handles the live estimate independently)
   const setAdvancedSettingsAndUpdate = useCallback((patch) => {
     setAdvancedSettings(patch)
   }, [setAdvancedSettings])
+
+  // ── Compression actions ───────────────────────────────────────────────────────
 
   const recompressAll = useCallback(() => {
     useCompressionStore.getState().resetAllToIdle()
@@ -139,18 +136,26 @@ export function useImageCompress() {
 
   const compressAll = useCallback(() => {
     const { files } = useCompressionStore.getState()
-    const ids = files.filter(f => f.status === 'idle' || f.status === 'error').map(f => f.id)
+    const ids = files
+      .filter(f => f.status === 'idle' || f.status === 'error')
+      .map(f => f.id)
     ids.forEach(id => {
       const f = useCompressionStore.getState().files.find(x => x.id === id)
-      if (f?.status === 'error') useCompressionStore.getState().updateFile(id, { status: 'idle', error: null, progress: 0 })
+      if (f?.status === 'error') {
+        useCompressionStore.getState().updateFile(id, { status: 'idle', error: null, progress: 0 })
+      }
     })
     if (ids.length) enqueue(ids)
   }, [])
 
   const retryFile = useCallback((id) => {
-    useCompressionStore.getState().updateFile(id, { status: 'idle', progress: 0, result: null, error: null })
+    useCompressionStore.getState().updateFile(id, {
+      status: 'idle', progress: 0, result: null, error: null,
+    })
     enqueue([id])
   }, [])
+
+  // ── Downloads ─────────────────────────────────────────────────────────────────
 
   const downloadOne = useCallback((id) => {
     const file = useCompressionStore.getState().files.find(f => f.id === id)
@@ -177,6 +182,7 @@ export function useImageCompress() {
       const zipBlob = await zip.generateAsync({ type: 'blob' })
       triggerDownload(URL.createObjectURL(zipBlob), 'bonsai_compressed.zip')
     } catch {
+      // jszip unavailable — fall back to individual downloads
       done.forEach(f => triggerDownload(f.result.url, f.result.name))
     }
   }, [])
@@ -185,12 +191,16 @@ export function useImageCompress() {
     const file = useCompressionStore.getState().files.find(f => f.id === id)
     if (!file?.result?.blob) return false
     try {
-      await navigator.clipboard.write([new ClipboardItem({ [file.result.outputMime]: file.result.blob })])
+      await navigator.clipboard.write([
+        new ClipboardItem({ [file.result.outputMime]: file.result.blob }),
+      ])
       return true
     } catch { return false }
   }, [])
 
-  // Clipboard paste
+  // ── Global event listeners ────────────────────────────────────────────────────
+
+  // Ctrl+V paste
   useEffect(() => {
     const handle = (e) => {
       const items = e.clipboardData?.items
@@ -198,7 +208,9 @@ export function useImageCompress() {
       for (const item of items) {
         if (item.type.startsWith('image/')) {
           const f = item.getAsFile()
-          if (f) stageFiles([new File([f], `pasted.${item.type.split('/')[1]}`, { type: item.type })])
+          if (f) {
+            stageFiles([new File([f], `pasted.${item.type.split('/')[1]}`, { type: item.type })])
+          }
           break
         }
       }
@@ -207,7 +219,7 @@ export function useImageCompress() {
     return () => window.removeEventListener('paste', handle)
   }, [stageFiles])
 
-  // Page-level drag-drop
+  // Page-level drag-drop (handles drops outside the DropZone component)
   useEffect(() => {
     const ov = (e) => e.preventDefault()
     const dr = (e) => {
@@ -217,10 +229,13 @@ export function useImageCompress() {
     }
     window.addEventListener('dragover', ov)
     window.addEventListener('drop', dr)
-    return () => { window.removeEventListener('dragover', ov); window.removeEventListener('drop', dr) }
+    return () => {
+      window.removeEventListener('dragover', ov)
+      window.removeEventListener('drop', dr)
+    }
   }, [stageFiles])
 
-  // Keyboard shortcuts
+  // Keyboard: Space = compress, ⌘/Ctrl+Backspace = clear all
   useEffect(() => {
     const handle = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
@@ -239,35 +254,45 @@ export function useImageCompress() {
     return () => window.removeEventListener('keydown', handle)
   }, [])
 
+  // ── Derived state ─────────────────────────────────────────────────────────────
+
   const hasIdle     = files.some(f => f.status === 'idle')
   const hasAnyDone  = files.some(f => f.status === 'done')
   const allSettled  = files.length > 0 && files.every(f => f.status === 'done' || f.status === 'error')
   const compressing = files.some(f => f.status === 'compressing')
 
   return {
+    // State
     files, preset, previews, useAdvanced, advancedSettings,
+    // Settings
     setPreset,
     setAdvancedSettings: setAdvancedSettingsAndUpdate,
     resetAdvanced,
+    // File management
     stageFiles, replaceWithFiles,
-    compressAll, recompressAll,
     removeFile, clearFiles,
-    retryFile,
+    setFileOutputName,
+    // Compression
+    compressAll, recompressAll, retryFile,
+    // Downloads
     downloadOne, downloadAll, downloadZip,
     copyToClipboard,
-    setFileOutputName, setFilePresetOverride,
+    // Derived
     hasIdle, hasAnyDone, allSettled, compressing,
-    historyEntries, clearHistory,
   }
 }
 
+// ─── Utility ──────────────────────────────────────────────────────────────────
 function triggerDownload(url, name) {
   fetch(url).then(r => r.blob()).then(blob => {
     const reader = new FileReader()
     reader.onload = () => {
       const a = document.createElement('a')
-      a.href = reader.result; a.download = name
-      document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      a.href     = reader.result
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
     }
     reader.readAsDataURL(blob)
   })
