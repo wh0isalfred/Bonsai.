@@ -20,7 +20,7 @@ export default function PresetPicker({ selected, onSelect, presetSizes = {}, est
               display:'inline-block', width:9, height:9, borderRadius:'50%',
               border:'1.5px solid var(--border-2)', borderTopColor:'var(--c)',
             }}/>
-            Estimating…
+            {presetSizes[selected] != null ? 'Updating size estimate...' : 'Estimating compressed size...'}
           </span>
         )}
       </div>

@@ -35,45 +35,107 @@ function debounce(fn, ms) {
 
 /* Render a downscaled preview — returns { url, size } */
 async function renderPreview(file, settings) {
-  const MAX = 560
   return new Promise((resolve, reject) => {
     const img = new Image()
     const src = URL.createObjectURL(file)
+
     img.onload = () => {
       URL.revokeObjectURL(src)
 
-      /* Scale for fast encode — only downsample, never upscale */
-      const scale  = Math.min(MAX / img.naturalWidth, MAX / img.naturalHeight, 1)
-      const w      = Math.max(1, Math.round(img.naturalWidth  * scale))
-      const h      = Math.max(1, Math.round(img.naturalHeight * scale))
+      /* ── High-quality bypass (no processing) ── */
+      const isHighQuality =
+        (settings.quality ?? 1) >= 0.98 &&
+        !settings.blurRadius &&
+        !settings.sharpenAmount &&
+        settings.resizeMode === 'none'
+
+      if (isHighQuality) {
+        resolve({
+          url: URL.createObjectURL(file),
+          estimatedSize: file.size,
+        })
+        return
+      }
+
+      /* ── Resize (preview-friendly, not destructive) ── */
+      const MAX = 1200
+      const scale = Math.min(
+        MAX / img.naturalWidth,
+        MAX / img.naturalHeight,
+        1
+      )
+
+      const w = Math.max(1, Math.round(img.naturalWidth * scale))
+      const h = Math.max(1, Math.round(img.naturalHeight * scale))
 
       const canvas = document.createElement('canvas')
-      canvas.width = w; canvas.height = h
+      canvas.width = w
+      canvas.height = h
+
       const ctx = canvas.getContext('2d')
       ctx.imageSmoothingEnabled = true
       ctx.imageSmoothingQuality = 'high'
+
+      /* ── Blur (native canvas filter) ── */
+      const blur = settings.blurRadius || 0
+      if (blur > 0) {
+        ctx.filter = `blur(${blur}px)`
+      }
+
       ctx.drawImage(img, 0, 0, w, h)
+      ctx.filter = 'none'
 
-      const q    = Math.max(0.01, Math.min(1, settings.quality ?? 0.82))
-      const mime = settings.outputFormat === 'jpeg' ? 'image/jpeg' : 'image/webp'
+      /* ── Sharpen (custom kernel) ── */
+      if ((settings.sharpenAmount || 0) > 0) {
+        applySharpen(ctx, w, h, settings.sharpenAmount)
+      }
 
-      canvas.toBlob(blob => {
-        if (!blob) { reject(new Error('Preview failed')); return }
+      /* ── Format handling ── */
+      const mimeMap = {
+        jpeg: 'image/jpeg',
+        webp: 'image/webp',
+        png: 'image/png',
+        avif: 'image/avif',
+      }
 
-        /*
-         * Extrapolate estimated full-resolution size from the preview blob.
-         * The preview was encoded at `scale` of the original dimensions.
-         * Pixel count ratio = scale², so full-size ≈ blob.size / scale².
-         * This isn't perfect (encoding isn't purely pixel-linear) but it's
-         * accurate to ±15% which is good enough for a live estimate.
-         */
-        const estimatedFullSize = scale < 1
-          ? Math.round(blob.size / (scale * scale))
-          : blob.size
+      let mime = mimeMap[settings.outputFormat] || file.type
 
-        resolve({ url: URL.createObjectURL(blob), estimatedSize: estimatedFullSize })
-      }, mime, q)
+      /* AVIF fallback (canvas support is inconsistent) */
+      const supportsAvif = canvas.toDataURL('image/avif').startsWith('data:image/avif')
+      if (mime === 'image/avif' && !supportsAvif) {
+        mime = 'image/webp'
+      }
+
+      /* Quality (ignored for PNG) */
+      const quality =
+        mime === 'image/png'
+          ? undefined
+          : Math.max(0.01, Math.min(1, settings.quality ?? 0.82))
+
+      /* ── Encode preview ── */
+      canvas.toBlob(
+        blob => {
+          if (!blob) {
+            reject(new Error('Preview failed'))
+            return
+          }
+
+          /* Estimate full-size output */
+          const estimatedSize =
+            scale < 1
+              ? Math.round(blob.size / (scale * scale))
+              : blob.size
+
+          resolve({
+            url: URL.createObjectURL(blob),
+            estimatedSize,
+          })
+        },
+        mime,
+        quality
+      )
     }
+
     img.onerror = reject
     img.src = src
   })
@@ -131,21 +193,35 @@ export default function ProEditor({ onAuth }) {
   }, [])
 
   /* ── Generate live preview (debounced 320ms) ──────────────────── */
-  const generatePreview = useCallback(
-    debounce(async (id, file, settings) => {
-      patch(id, { previewLoading: true })
-      try {
-        const { url, estimatedSize } = await renderPreview(file, settings)
-        /* Revoke previous preview URL */
-        const prev = prevUrlsRef.current.get(id)
-        if (prev) URL.revokeObjectURL(prev)
-        prevUrlsRef.current.set(id, url)
-        patch(id, { previewUrl: url, estimatedSize, previewLoading: false })
-      } catch {
-        patch(id, { previewLoading: false })
-      }
-    }, 320),
-  [patch])
+ const debouncedPreviewRef = useRef(null)
+
+useEffect(() => {
+  debouncedPreviewRef.current = debounce(async (id, file, settings) => {
+    patch(id, { previewLoading: true })
+
+    try {
+      const { url, estimatedSize } = await renderPreview(file, settings)
+
+      const prev = prevUrlsRef.current.get(id)
+      if (prev) URL.revokeObjectURL(prev)
+
+      prevUrlsRef.current.set(id, url)
+
+      patch(id, {
+        previewUrl: url,
+        estimatedSize,
+        previewLoading: false,
+      })
+    } catch {
+      patch(id, { previewLoading: false })
+    }
+  }, 320)
+
+  return () => {
+    // cleanup debounce timer
+    debouncedPreviewRef.current = null
+  }
+}, [patch])
 
   /* ── Drop files ───────────────────────────────────────────────── */
   const handleDrop = useCallback((incoming) => {
@@ -184,15 +260,15 @@ export default function ProEditor({ onAuth }) {
           : s
       )
       const sess = next.find(s => s.id === activeId)
-      if (sess) generatePreview(sess.id, sess.file, sess.settings)
+      if (sess) debouncedPreviewRef.current?.(sess.id, sess.file, sess.settings)
       return next
     })
-  }, [activeId, generatePreview])
+  }, [activeId, debouncedPreviewRef])
 
   /* Generate initial preview when activeId changes */
   useEffect(() => {
     if (!active) return
-    generatePreview(active.id, active.file, active.settings)
+    debouncedPreviewRef.current?.(active.id, active.file, active.settings)
   }, [activeId]) // eslint-disable-line
 
   /* ── Compress & move to next ──────────────────────────────────── */

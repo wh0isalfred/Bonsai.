@@ -27,7 +27,9 @@ export default function FileCard({ file, onRemove, onRetry, onDownload, onCopy, 
     try {
       const ok = await onCopy?.(id)
       if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1800) }
-    } catch {}
+    } catch {
+        // Ignore copy errors (e.g. permissions, unsupported formats)
+    }
   }
 
   const isDone       = status === 'done'
