@@ -381,6 +381,7 @@ useEffect(() => {
           session={active}
           onSettingsChange={handleSettingsChange}
           onCompress={handleCompress}
+          onCancel={handleStartOver}
           hasNext={sessions.some(s => s.id !== active.id && s.status === 'editing')} />
       )}
 
@@ -406,7 +407,7 @@ useEffect(() => {
 }
 
 /* ── Editor panel ───────────────────────────────────────────────────── */
-function EditorPanel({ session, onSettingsChange, onCompress, hasNext }) {
+function EditorPanel({ session, onSettingsChange, onCompress, onCancel, hasNext }) {
   const { name, size, beforeUrl, previewUrl, previewLoading,
           settings, estimatedSize } = session
 
@@ -512,14 +513,45 @@ function EditorPanel({ session, onSettingsChange, onCompress, hasNext }) {
           </div>
         </div>
 
-        <button
-          onClick={onCompress}
-          className="btn btn-primary btn-sm"
-          style={{ flexShrink: 0 }}>
-          <LeafIcon />
-          {hasNext ? 'Compress & next' : 'Compress'}
-        </button>
-      </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+  
+            {/* Cancel / Close */}
+            <button
+              onClick={() => {if (confirm('Discard all images?')){
+                onCancel()
+              }
+              }}
+              className="btn btn-ghost btn-sm"
+              title="Cancel and go back"
+              style={{
+                width: 28,
+                height: 28,
+                padding: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '50%',
+                fontSize: 16,
+                lineHeight: 1,
+                 color: 'var(--t-secondary)',
+              }}
+              onMouseEnter={e => e.currentTarget.style.color = 'var(--danger)'}
+              onMouseLeave={e => e.currentTarget.style.color = 'var(--t-secondary)'}
+              >
+              ×
+            </button>
+
+            {/* Compress */}
+            <button
+              onClick={onCompress}
+              className="btn btn-primary btn-sm"
+              style={{ flexShrink: 0 }}>
+              <LeafIcon />
+              {hasNext ? 'Compress & next' : 'Compress'}
+            </button>
+
+        </div>
+</div>
 
       {/* Body: compare + controls */}
       <div style={{
