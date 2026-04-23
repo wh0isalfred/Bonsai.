@@ -326,21 +326,38 @@ useEffect(() => {
   }, [active, patch])
 
   /* ── Remove from queue ────────────────────────────────────────── */
-  const handleRemove = useCallback((id) => {
-    workers.current.get(id)?.terminate()
-    workers.current.delete(id)
-    const prev = prevUrlsRef.current.get(id)
-    if (prev) URL.revokeObjectURL(prev)
-    prevUrlsRef.current.delete(id)
+const handleRemoveActive = useCallback(() => {
+  if (!activeId) return
 
-    setSessions(prev => {
-      const s = prev.find(x => x.id === id)
-      if (s?.beforeUrl)   URL.revokeObjectURL(s.beforeUrl)
-      if (s?.result?.url) URL.revokeObjectURL(s.result.url)
-      return prev.filter(x => x.id !== id)
-    })
-    setActiveId(a => a === id ? null : a)
-  }, [])
+  // kill worker if running
+  workers.current.get(activeId)?.terminate()
+  workers.current.delete(activeId)
+
+  // revoke preview url
+  const prev = prevUrlsRef.current.get(activeId)
+  if (prev) URL.revokeObjectURL(prev)
+  prevUrlsRef.current.delete(activeId)
+
+  setSessions(prev => {
+    const current = prev.find(s => s.id === activeId)
+
+    // cleanup urls
+    if (current?.beforeUrl) URL.revokeObjectURL(current.beforeUrl)
+    if (current?.result?.url) URL.revokeObjectURL(current.result.url)
+
+    const remaining = prev.filter(s => s.id !== activeId)
+
+    // pick next active (prefer next editing, else anything)
+    const next =
+      remaining.find(s => s.status === 'editing') ||
+      remaining[0] ||
+      null
+
+    setActiveId(next?.id ?? null)
+
+    return remaining
+  })
+}, [activeId])
 
   /* ── Start over ───────────────────────────────────────────────── */
   const handleStartOver = useCallback(() => {
@@ -381,13 +398,13 @@ useEffect(() => {
           session={active}
           onSettingsChange={handleSettingsChange}
           onCompress={handleCompress}
-          onCancel={handleStartOver}
+          onRemove={handleRemoveActive}
           hasNext={sessions.some(s => s.id !== active.id && s.status === 'editing')} />
       )}
 
       {/* Queue */}
       {queue.length > 0 && (
-        <ProQueue sessions={queue} onRemove={handleRemove} />
+        <ProQueue sessions={queue} onRemove={handleRemoveActive} />
       )}
 
       {/* All done bottom bar */}
@@ -407,7 +424,7 @@ useEffect(() => {
 }
 
 /* ── Editor panel ───────────────────────────────────────────────────── */
-function EditorPanel({ session, onSettingsChange, onCompress, onCancel, hasNext }) {
+function EditorPanel({ session, onSettingsChange, onCompress, onRemove, hasNext }) {
   const { name, size, beforeUrl, previewUrl, previewLoading,
           settings, estimatedSize } = session
 
@@ -517,12 +534,12 @@ function EditorPanel({ session, onSettingsChange, onCompress, onCancel, hasNext 
   
             {/* Cancel / Close */}
             <button
-              onClick={() => {if (confirm('Discard all images?')){
-                onCancel()
+              onClick={() => {if (confirm('Remove image from the queue?')){
+                onRemove()
               }
               }}
               className="btn btn-ghost btn-sm"
-              title="Cancel and go back"
+              title="Remove this image"
               style={{
                 width: 28,
                 height: 28,
