@@ -48,63 +48,79 @@ export default function SmartCompressor() {
   const { addBatch }    = useHistoryStore()
   const { downloadZip } = useDownloads()
 
-  /* ── Estimate compressed sizes for all presets ─────────────────────
-     Uses the first idle file as a representative sample.
-     Runs a quick canvas encode at reduced resolution per preset. */
-  const estimatePresetSizes = useCallback(async (sampleFile) => {
-    if (!sampleFile) { setPresetSizes({}); return }
+  /* ── Estimate compressed sizes for all presets ────────────────────
+     Runs on ALL idle files in parallel, sums results per preset.
+     Uses a small 320px thumbnail encode to stay fast.
+     Result: total estimated output bytes across all staged files. */
+  const estimatePresetSizes = useCallback(async (idleFileList) => {
+    if (!idleFileList.length) { setPresetSizes({}); return }
 
     setEstimating(true)
-    const results = {}
+    const MAX = 320
 
-    await Promise.all(PRESETS.map(async p => {
-      try {
-        const MAX   = 400   // small enough to be fast
-        const url   = URL.createObjectURL(sampleFile)
-
-        const size = await new Promise((resolve, reject) => {
+    /* For each file, encode at each preset quality and collect bytes */
+    const perFile = await Promise.all(
+      idleFileList.map(({ file, size: originalSize }) =>
+        new Promise(resolveFile => {
+          const url = URL.createObjectURL(file)
           const img = new Image()
-          img.onload = () => {
+
+          img.onload = async () => {
             URL.revokeObjectURL(url)
+
             const scale = Math.min(MAX / img.naturalWidth, MAX / img.naturalHeight, 1)
             const w = Math.max(1, Math.round(img.naturalWidth  * scale))
             const h = Math.max(1, Math.round(img.naturalHeight * scale))
+
             const canvas = document.createElement('canvas')
             canvas.width = w; canvas.height = h
             const ctx = canvas.getContext('2d')
             ctx.imageSmoothingEnabled = true
             ctx.imageSmoothingQuality = 'high'
             ctx.drawImage(img, 0, 0, w, h)
-            const q    = Math.max(0.01, Math.min(1, p.settings.quality))
-            const mime = 'image/webp'
-            canvas.toBlob(blob => {
-              if (!blob) { reject(new Error('toBlob failed')); return }
-              /* Extrapolate from thumbnail to full resolution */
-              const fullEst = scale < 1
-                ? Math.round(blob.size / (scale * scale))
-                : blob.size
-              resolve(fullEst)
-            }, mime, q)
+
+            const fileResults = {}
+
+            await Promise.all(PRESETS.map(p =>
+              new Promise(res => {
+                const q = Math.max(0.01, Math.min(0.99, p.settings.quality))
+                canvas.toBlob(blob => {
+                  if (!blob) { res(); return }
+
+                  /* Extrapolate to full resolution, cap upward only */
+                  const rawEst = scale < 1
+                    ? Math.round(blob.size / (scale * scale))
+                    : blob.size
+                  fileResults[p.id] = Math.min(rawEst, originalSize)
+                  res()
+                }, 'image/webp', q)
+              })
+            ))
+
+            resolveFile(fileResults)
           }
-          img.onerror = reject
+
+          img.onerror = () => resolveFile({})
           img.src = url
         })
+      )
+    )
 
-        results[p.id] = size
-      } catch {
-        /* Estimation failed for this preset — skip silently */
-      }
-    }))
+    /* Sum per-preset estimates across all files */
+    const totals = {}
+    PRESETS.forEach(p => {
+      totals[p.id] = perFile.reduce((sum, f) => sum + (f[p.id] ?? 0), 0)
+    })
 
-    setPresetSizes(results)
+    setPresetSizes(totals)
     setEstimating(false)
   }, [])
 
-  /* Trigger estimation when first file is added */
+  /* Re-run when the set of idle files changes */
   useEffect(() => {
-    const first = files.find(f => f.status === 'idle')
-    if (first) {
-      estimatePresetSizes(first.file)
+    const idle = files.filter(f => f.status === 'idle')
+    if (idle.length) {
+      estimatePresetSizes(idle)
     } else {
       setPresetSizes({})
     }
@@ -335,6 +351,7 @@ export default function SmartCompressor() {
           selected={preset}
           onSelect={setPreset}
           presetSizes={presetSizes}
+          totalOriginal={idleFiles.reduce((s, f) => s + f.size, 0)}
           estimating={estimating} />
       )}
 

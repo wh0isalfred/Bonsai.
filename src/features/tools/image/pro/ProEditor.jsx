@@ -33,8 +33,20 @@ function debounce(fn, ms) {
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms) }
 }
 
-/* Render a downscaled preview — returns { url, size } */
+/*
+ * renderPreview — renders a live preview reflecting ALL current settings.
+ * Returns { url: string, estimatedSize: number }.
+ *
+ * Quality:  applied to canvas.toBlob quality param
+ * Blur:     applied via ctx.filter before drawImage
+ * Sharpen:  5-tap unsharp mask on pixel data
+ * Format:   jpeg/webp/png (avif falls back to webp if unsupported)
+ *
+ * Uses a 640px max-dimension thumbnail for speed (~5–20ms on modern devices).
+ * Extrapolates full-resolution size via pixel-area ratio, capped at original.
+ */
 async function renderPreview(file, settings) {
+  const MAX = 640
   return new Promise((resolve, reject) => {
     const img = new Image()
     const src = URL.createObjectURL(file)
@@ -42,103 +54,102 @@ async function renderPreview(file, settings) {
     img.onload = () => {
       URL.revokeObjectURL(src)
 
-      /* ── High-quality bypass (no processing) ── */
-      const isHighQuality =
-        (settings.quality ?? 1) >= 0.98 &&
-        !settings.blurRadius &&
-        !settings.sharpenAmount &&
-        settings.resizeMode === 'none'
-
-      if (isHighQuality) {
-        resolve({
-          url: URL.createObjectURL(file),
-          estimatedSize: file.size,
-        })
-        return
-      }
-
-      /* ── Resize (preview-friendly, not destructive) ── */
-      const MAX = 1200
-      const scale = Math.min(
-        MAX / img.naturalWidth,
-        MAX / img.naturalHeight,
-        1
-      )
-
-      const w = Math.max(1, Math.round(img.naturalWidth * scale))
+      const scale = Math.min(MAX / img.naturalWidth, MAX / img.naturalHeight, 1)
+      const w = Math.max(1, Math.round(img.naturalWidth  * scale))
       const h = Math.max(1, Math.round(img.naturalHeight * scale))
 
       const canvas = document.createElement('canvas')
-      canvas.width = w
-      canvas.height = h
-
-      const ctx = canvas.getContext('2d')
+      canvas.width = w; canvas.height = h
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })
       ctx.imageSmoothingEnabled = true
       ctx.imageSmoothingQuality = 'high'
 
-      /* ── Blur (native canvas filter) ── */
-      const blur = settings.blurRadius || 0
+      /* Blur — apply before drawing via CSS filter */
+      const blur = settings.blurRadius ?? 0
       if (blur > 0) {
         ctx.filter = `blur(${blur}px)`
+        ctx.drawImage(img, 0, 0, w, h)
+        ctx.filter = 'none'
+      } else {
+        ctx.drawImage(img, 0, 0, w, h)
       }
 
-      ctx.drawImage(img, 0, 0, w, h)
-      ctx.filter = 'none'
+      /* Sharpen — 5-tap unsharp mask */
+      const sharpen = settings.sharpenAmount ?? 0
+      if (sharpen > 0) applyUnsharpMask(ctx, w, h, sharpen)
 
-      /* ── Sharpen (custom kernel) ── */
-      if ((settings.sharpenAmount || 0) > 0) {
-        applySharpen(ctx, w, h, settings.sharpenAmount)
-      }
-
-      /* ── Format handling ── */
-      const mimeMap = {
-        jpeg: 'image/jpeg',
-        webp: 'image/webp',
-        png: 'image/png',
-        avif: 'image/avif',
-      }
-
-      let mime = mimeMap[settings.outputFormat] || file.type
-
-      /* AVIF fallback (canvas support is inconsistent) */
-      const supportsAvif = canvas.toDataURL('image/avif').startsWith('data:image/avif')
-      if (mime === 'image/avif' && !supportsAvif) {
-        mime = 'image/webp'
-      }
+      /* Format */
+      const fmt  = settings.outputFormat ?? 'webp'
+      const mime = fmt === 'jpeg'     ? 'image/jpeg'
+                 : fmt === 'png'      ? 'image/png'
+                 : fmt === 'original' ? (file.type || 'image/webp')
+                 : 'image/webp'   // webp / avif / auto all default to webp for preview
 
       /* Quality (ignored for PNG) */
-      const quality =
-        mime === 'image/png'
-          ? undefined
-          : Math.max(0.01, Math.min(1, settings.quality ?? 0.82))
+      const q = mime === 'image/png'
+        ? undefined
+        : Math.max(0.01, Math.min(1, settings.quality ?? 0.82))
 
-      /* ── Encode preview ── */
-      canvas.toBlob(
-        blob => {
-          if (!blob) {
-            reject(new Error('Preview failed'))
-            return
-          }
+      canvas.toBlob(blob => {
+        if (!blob) { reject(new Error('Preview blob is null')); return }
 
-          /* Estimate full-size output */
-          const estimatedSize =
-            scale < 1
-              ? Math.round(blob.size / (scale * scale))
-              : blob.size
+        /* Cap upward only — estimate can never exceed original size.
+           We don't use 0.98 because that clamps small-file estimates
+           to a near-identical number regardless of quality setting. */
+        const raw = scale < 1
+          ? Math.round(blob.size / (scale * scale))
+          : blob.size
+        const estimatedSize = Math.min(raw, file.size)
 
-          resolve({
-            url: URL.createObjectURL(blob),
-            estimatedSize,
-          })
-        },
-        mime,
-        quality
-      )
+        resolve({ url: URL.createObjectURL(blob), estimatedSize })
+      }, mime, q)
     }
 
-    img.onerror = reject
+    img.onerror = () => reject(new Error('Image failed to load'))
     img.src = src
   })
+}
+
+/* 5-tap unsharp mask (same algorithm as compression.worker.js) */
+function applyUnsharpMask(ctx, w, h, amount) {
+  const strength = Math.max(0, Math.min(5, amount)) * 0.6
+  const src  = ctx.getImageData(0, 0, w, h)
+  const orig = new Uint8ClampedArray(src.data)
+  const d    = src.data
+  const out  = ctx.createImageData(w, h)
+  const od   = out.data
+
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i  = (y * w + x) * 4
+      const n  = ((y-1)*w + x  ) * 4
+      const s  = ((y+1)*w + x  ) * 4
+      const e  = (y*w   + x+1  ) * 4
+      const ww = (y*w   + x-1  ) * 4
+      const ne = ((y-1)*w + x+1) * 4
+      const nw = ((y-1)*w + x-1) * 4
+      const se = ((y+1)*w + x+1) * 4
+      const sw = ((y+1)*w + x-1) * 4
+      for (let c = 0; c < 3; c++) {
+        const blurred =
+          d[i+c]*0.36 +
+          (d[n+c]+d[s+c]+d[e+c]+d[ww+c])*0.12 +
+          (d[ne+c]+d[nw+c]+d[se+c]+d[sw+c])*0.04
+        od[i+c] = Math.round(Math.max(0, Math.min(255,
+          orig[i+c] + strength * (orig[i+c] - blurred)
+        )))
+      }
+      od[i+3] = d[i+3]
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (y > 0 && y < h-1 && x > 0 && x < w-1) continue
+      const i = (y*w+x)*4
+      od[i]=d[i]; od[i+1]=d[i+1]; od[i+2]=d[i+2]; od[i+3]=d[i+3]
+    }
+  }
+  ctx.putImageData(out, 0, 0)
 }
 
 export default function ProEditor({ onAuth }) {
@@ -192,36 +203,48 @@ export default function ProEditor({ onAuth }) {
     setSessions(prev => prev.map(s => s.id === id ? { ...s, ...update } : s))
   }, [])
 
-  /* ── Generate live preview (debounced 320ms) ──────────────────── */
- const debouncedPreviewRef = useRef(null)
+  /*
+   * ── Generate live preview (debounced 320ms) ───────────────────────
+   *
+   * Critical: the debounce function MUST be stable across renders.
+   * Wrapping debounce() inside useCallback recreates it on every render
+   * which resets the timer and means the preview never fires while
+   * the user is dragging a slider.
+   *
+   * Fix: store debounce in a ref so it's created once for the lifetime
+   * of the component. We access the latest `patch` via a ref too.
+   */
+  const patchRef = useRef(patch)
+  useEffect(() => { patchRef.current = patch }, [patch])
 
-useEffect(() => {
-  debouncedPreviewRef.current = debounce(async (id, file, settings) => {
-    patch(id, { previewLoading: true })
+  const generatePreview = useRef(
+    debounce(async (id, file, settings, prevUrlsMap) => {
+      patchRef.current(id, { previewLoading: true })
+      try {
+        const { url, estimatedSize } = await renderPreview(file, settings)
+        const prev = prevUrlsMap.get(id)
+        if (prev) URL.revokeObjectURL(prev)
+        prevUrlsMap.set(id, url)
+        patchRef.current(id, { previewUrl: url, estimatedSize, previewLoading: false })
+      } catch {
+        patchRef.current(id, { previewLoading: false })
+      }
+    }, 320)
+  ).current
 
-    try {
-      const { url, estimatedSize } = await renderPreview(file, settings)
+  /* Convenience wrapper that passes prevUrlsRef automatically */
+  const triggerPreview = useCallback((id, file, settings) => {
+    generatePreview(id, file, settings, prevUrlsRef.current)
+  }, [generatePreview])
 
-      const prev = prevUrlsRef.current.get(id)
-      if (prev) URL.revokeObjectURL(prev)
-
-      prevUrlsRef.current.set(id, url)
-
-      patch(id, {
-        previewUrl: url,
-        estimatedSize,
-        previewLoading: false,
-      })
-    } catch {
-      patch(id, { previewLoading: false })
-    }
-  }, 320)
-
-  return () => {
-    // cleanup debounce timer
-    debouncedPreviewRef.current = null
-  }
-}, [patch])
+  /*
+   * Keep a ref to the active session so handleSettingsChange can read
+   * the current file + settings synchronously without stale closure.
+   * This avoids needing `sessions` as a dependency (which would cause
+   * handleSettingsChange to recreate on every keystroke/slider move).
+   */
+  const activeRef = useRef(null)
+  useEffect(() => { activeRef.current = active ?? null }, [active])
 
   /* ── Drop files ───────────────────────────────────────────────── */
   const handleDrop = useCallback((incoming) => {
@@ -244,7 +267,6 @@ useEffect(() => {
 
     setSessions(prev => {
       const next = [...prev, ...newSessions]
-      /* Open first new session if none active */
       setActiveId(a => a ?? newSessions[0]?.id)
       return next
     })
@@ -252,23 +274,31 @@ useEffect(() => {
 
   /* ── Settings change → re-generate preview ────────────────────── */
   const handleSettingsChange = useCallback((patch_) => {
-    if (!activeId) return
-    setSessions(prev => {
-      const next = prev.map(s =>
-        s.id === activeId
-          ? { ...s, settings: { ...s.settings, ...patch_ } }
-          : s
-      )
-      const sess = next.find(s => s.id === activeId)
-      if (sess) debouncedPreviewRef.current?.(sess.id, sess.file, sess.settings)
-      return next
-    })
-  }, [activeId, debouncedPreviewRef])
+    if (!activeId || !activeRef.current) return
+
+    /*
+     * Merge the patch with current settings BEFORE the state update
+     * so we can pass the correct new settings to triggerPreview.
+     * Calling triggerPreview inside setSessions is not allowed —
+     * state updater functions must be pure (no side effects).
+     */
+    const newSettings = { ...activeRef.current.settings, ...patch_ }
+
+    /* 1. Update state */
+    setSessions(prev => prev.map(s =>
+      s.id === activeId
+        ? { ...s, settings: newSettings }
+        : s
+    ))
+
+    /* 2. Trigger preview with the new settings — outside the updater */
+    triggerPreview(activeId, activeRef.current.file, newSettings)
+  }, [activeId, triggerPreview])
 
   /* Generate initial preview when activeId changes */
   useEffect(() => {
     if (!active) return
-    debouncedPreviewRef.current?.(active.id, active.file, active.settings)
+    triggerPreview(active.id, active.file, active.settings)
   }, [activeId]) // eslint-disable-line
 
   /* ── Compress & move to next ──────────────────────────────────── */
@@ -326,38 +356,21 @@ useEffect(() => {
   }, [active, patch])
 
   /* ── Remove from queue ────────────────────────────────────────── */
-const handleRemoveActive = useCallback(() => {
-  if (!activeId) return
+  const handleRemove = useCallback((id) => {
+    workers.current.get(id)?.terminate()
+    workers.current.delete(id)
+    const prev = prevUrlsRef.current.get(id)
+    if (prev) URL.revokeObjectURL(prev)
+    prevUrlsRef.current.delete(id)
 
-  // kill worker if running
-  workers.current.get(activeId)?.terminate()
-  workers.current.delete(activeId)
-
-  // revoke preview url
-  const prev = prevUrlsRef.current.get(activeId)
-  if (prev) URL.revokeObjectURL(prev)
-  prevUrlsRef.current.delete(activeId)
-
-  setSessions(prev => {
-    const current = prev.find(s => s.id === activeId)
-
-    // cleanup urls
-    if (current?.beforeUrl) URL.revokeObjectURL(current.beforeUrl)
-    if (current?.result?.url) URL.revokeObjectURL(current.result.url)
-
-    const remaining = prev.filter(s => s.id !== activeId)
-
-    // pick next active (prefer next editing, else anything)
-    const next =
-      remaining.find(s => s.status === 'editing') ||
-      remaining[0] ||
-      null
-
-    setActiveId(next?.id ?? null)
-
-    return remaining
-  })
-}, [activeId])
+    setSessions(prev => {
+      const s = prev.find(x => x.id === id)
+      if (s?.beforeUrl)   URL.revokeObjectURL(s.beforeUrl)
+      if (s?.result?.url) URL.revokeObjectURL(s.result.url)
+      return prev.filter(x => x.id !== id)
+    })
+    setActiveId(a => a === id ? null : a)
+  }, [])
 
   /* ── Start over ───────────────────────────────────────────────── */
   const handleStartOver = useCallback(() => {
@@ -398,13 +411,12 @@ const handleRemoveActive = useCallback(() => {
           session={active}
           onSettingsChange={handleSettingsChange}
           onCompress={handleCompress}
-          onRemove={handleRemoveActive}
           hasNext={sessions.some(s => s.id !== active.id && s.status === 'editing')} />
       )}
 
       {/* Queue */}
       {queue.length > 0 && (
-        <ProQueue sessions={queue} onRemove={handleRemoveActive} />
+        <ProQueue sessions={queue} onRemove={handleRemove} />
       )}
 
       {/* All done bottom bar */}
@@ -424,13 +436,15 @@ const handleRemoveActive = useCallback(() => {
 }
 
 /* ── Editor panel ───────────────────────────────────────────────────── */
-function EditorPanel({ session, onSettingsChange, onCompress, onRemove, hasNext }) {
+function EditorPanel({ session, onSettingsChange, onCompress, hasNext }) {
   const { name, size, beforeUrl, previewUrl, previewLoading,
           settings, estimatedSize } = session
 
-  const savings = estimatedSize && size
+  const savings = estimatedSize != null && size
     ? Math.round((1 - estimatedSize / size) * 100)
     : null
+  /* When estimate = original (high quality, already-compressed file) */
+  const noReduction = savings !== null && savings <= 0
 
   return (
     <div
@@ -479,19 +493,19 @@ function EditorPanel({ session, onSettingsChange, onCompress, onRemove, hasNext 
             </span>
 
             {/* Arrow + estimated size */}
-            {estimatedSize && (
+            {estimatedSize != null && (
               <>
                 <span style={{ color: 'var(--border-3)', fontSize: '.65rem' }}>→</span>
                 <span style={{
                   fontSize:   '.78rem',
                   fontWeight: 700,
-                  color:      savings > 0 ? 'var(--c)' : 'var(--t-secondary)',
+                  color:      !noReduction ? 'var(--c)' : 'var(--t-secondary)',
                   fontVariantNumeric: 'tabular-nums',
                 }}>
                   ~{formatBytes(estimatedSize)}
                 </span>
 
-                {/* Savings badge */}
+                {/* Savings badge — positive reduction only */}
                 {savings > 0 && (
                   <span style={{
                     fontSize:      '.6rem',
@@ -503,6 +517,17 @@ function EditorPanel({ session, onSettingsChange, onCompress, onRemove, hasNext 
                     animation:     'fade-up .18s ease both',
                   }}>
                     −{savings}%
+                  </span>
+                )}
+
+                {/* No-reduction note for already-compressed files */}
+                {noReduction && (
+                  <span style={{
+                    fontSize:    '.62rem',
+                    color:       'var(--t-tertiary)',
+                    fontStyle:   'italic',
+                  }}>
+                    file already optimised
                   </span>
                 )}
               </>
@@ -530,45 +555,14 @@ function EditorPanel({ session, onSettingsChange, onCompress, onRemove, hasNext 
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-  
-            {/* Cancel / Close */}
-            <button
-              onClick={() => {if (confirm('Remove image from the queue?')){
-                onRemove()
-              }
-              }}
-              className="btn btn-ghost btn-sm"
-              title="Remove this image"
-              style={{
-                width: 28,
-                height: 28,
-                padding: 0,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: '50%',
-                fontSize: 16,
-                lineHeight: 1,
-                 color: 'var(--t-secondary)',
-              }}
-              onMouseEnter={e => e.currentTarget.style.color = 'var(--danger)'}
-              onMouseLeave={e => e.currentTarget.style.color = 'var(--t-secondary)'}
-              >
-              ×
-            </button>
-
-            {/* Compress */}
-            <button
-              onClick={onCompress}
-              className="btn btn-primary btn-sm"
-              style={{ flexShrink: 0 }}>
-              <LeafIcon />
-              {hasNext ? 'Compress & next' : 'Compress'}
-            </button>
-
-        </div>
-</div>
+        <button
+          onClick={onCompress}
+          className="btn btn-primary btn-sm"
+          style={{ flexShrink: 0 }}>
+          <LeafIcon />
+          {hasNext ? 'Compress & next' : 'Compress'}
+        </button>
+      </div>
 
       {/* Body: compare + controls */}
       <div style={{

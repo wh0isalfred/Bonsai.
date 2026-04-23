@@ -1,16 +1,26 @@
 /**
  * src/features/tools/image/smart/PresetPicker.jsx
- * Shows estimated compressed size per preset alongside the quality bar.
+ *
+ * Shows estimated total compressed size across all staged files per preset.
+ * Handles the "high quality = minimal savings" case gracefully.
  */
 import { PRESETS } from '../../../../config/presets'
 import { formatBytes } from '../../../../utils/formatBytes'
 
-export default function PresetPicker({ selected, onSelect, presetSizes = {}, estimating = false }) {
+export default function PresetPicker({
+  selected,
+  onSelect,
+  presetSizes  = {},   // { [presetId]: totalEstimatedBytes }
+  totalOriginal = 0,   // sum of all staged file sizes (bytes)
+  estimating   = false,
+}) {
   return (
     <div>
       <div style={{ display:'flex', alignItems:'center', gap:8, margin:'0 0 .65rem' }}>
-        <p style={{ fontSize:'.6rem', fontWeight:700, letterSpacing:'.11em',
-                    textTransform:'uppercase', color:'var(--c)', margin:0 }}>
+        <p style={{
+          fontSize:'.6rem', fontWeight:700, letterSpacing:'.11em',
+          textTransform:'uppercase', color:'var(--c)', margin:0,
+        }}>
           Compression level
         </p>
         {estimating && (
@@ -20,34 +30,48 @@ export default function PresetPicker({ selected, onSelect, presetSizes = {}, est
               display:'inline-block', width:9, height:9, borderRadius:'50%',
               border:'1.5px solid var(--border-2)', borderTopColor:'var(--c)',
             }}/>
-            {presetSizes[selected] != null ? 'Updating size estimate...' : 'Estimating compressed size...'}
+            Estimating…
           </span>
         )}
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:8 }}>
-        {PRESETS.map(p => (
-          <PresetCard
-            key={p.id}
-            preset={p}
-            active={selected === p.id}
-            estimatedSize={presetSizes[p.id] ?? null}
-            onSelect={onSelect} />
-        ))}
+        {PRESETS.map(p => {
+          const est     = presetSizes[p.id] ?? null
+          const savings = (est != null && totalOriginal > 0 && est < totalOriginal)
+            ? Math.round((1 - est / totalOriginal) * 100)
+            : null
+          /* Show "No reduction" when estimate is at/near original size */
+          const noReduction = est != null && totalOriginal > 0 && est >= totalOriginal * 0.99
+
+          return (
+            <PresetCard
+              key={p.id}
+              preset={p}
+              active={selected === p.id}
+              estimatedSize={est}
+              savings={savings}
+              noReduction={noReduction}
+              onSelect={onSelect} />
+          )
+        })}
       </div>
     </div>
   )
 }
 
-function PresetCard({ preset, active, estimatedSize, onSelect }) {
+function PresetCard({ preset, active, estimatedSize, savings, noReduction, onSelect }) {
   const { id, label, sublabel, desc, qualityBar } = preset
+
+  const minimalSavings = noReduction ||
+    (estimatedSize != null && (savings === 0 || savings == null))
 
   return (
     <button
       onClick={() => onSelect(id)}
       aria-pressed={active}
       style={{
-        textAlign:'left', padding:'11px 13px 12px',
+        textAlign:'left', padding:'11px 13px 13px',
         borderRadius:'var(--r-md)',
         border:`1.5px solid ${active ? 'var(--c-border)' : 'var(--border)'}`,
         background: active ? 'var(--c-bg)' : 'var(--surface)',
@@ -58,20 +82,22 @@ function PresetCard({ preset, active, estimatedSize, onSelect }) {
       onMouseEnter={e => { if (!active) e.currentTarget.style.borderColor = 'var(--border-3)' }}
       onMouseLeave={e => { if (!active) e.currentTarget.style.borderColor = 'var(--border)' }}>
 
-      {/* Label + checkmark */}
+      {/* Label row */}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:4 }}>
         <span style={{
-          fontFamily: 'var(--font-brand)', fontStyle: active ? 'italic' : 'normal',
-          fontWeight: 700, fontSize: '.88rem',
+          fontFamily:'var(--font-brand)', fontStyle: active ? 'italic' : 'normal',
+          fontWeight:700, fontSize:'.88rem',
           color: active ? 'var(--c)' : 'var(--t-primary)',
-          transition: 'color var(--t-fast)',
+          transition:'color var(--t-fast)',
         }}>
           {label}
         </span>
         {active && (
-          <span style={{ fontSize:'.55rem', fontWeight:700, letterSpacing:'.06em',
-                         textTransform:'uppercase', padding:'2px 6px', borderRadius:99,
-                         background:'var(--c)', color:'var(--ink)' }}>
+          <span style={{
+            fontSize:'.55rem', fontWeight:700, letterSpacing:'.06em',
+            textTransform:'uppercase', padding:'2px 6px', borderRadius:99,
+            background:'var(--c)', color:'var(--ink)',
+          }}>
             ✓
           </span>
         )}
@@ -87,30 +113,56 @@ function PresetCard({ preset, active, estimatedSize, onSelect }) {
         }}/>
       </div>
 
-      {/* Sub-label + estimated size on the same row */}
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:4 }}>
-        <span style={{ fontSize:'.66rem', fontWeight:600,
-                       color: active ? 'var(--c)' : 'var(--t-tertiary)',
-                       transition:'color var(--t-fast)' }}>
+      {/* Sublabel + estimated size */}
+      <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:4 }}>
+        <span style={{
+          fontSize:'.66rem', fontWeight:600,
+          color: active ? 'var(--c)' : 'var(--t-tertiary)',
+          transition:'color var(--t-fast)',
+        }}>
           {sublabel}
         </span>
 
         {estimatedSize != null && (
-          <span style={{
-            fontSize:'.68rem', fontWeight:700,
-            color: active ? 'var(--c)' : 'var(--t-secondary)',
-            fontVariantNumeric:'tabular-nums',
-            animation:'fade-up .18s ease both',
-          }}>
-            ~{formatBytes(estimatedSize)}
-          </span>
+          <div style={{ display:'flex', alignItems:'center', gap:4, flexShrink:0 }}>
+            <span style={{
+              fontSize:'.68rem', fontWeight:700,
+              color: active
+                ? (minimalSavings ? 'var(--t-tertiary)' : 'var(--c)')
+                : 'var(--t-secondary)',
+              fontVariantNumeric:'tabular-nums',
+              animation:'fade-up .18s ease both',
+            }}>
+              ~{formatBytes(estimatedSize)}
+            </span>
+            {savings != null && savings > 0 && (
+              <span style={{
+                fontSize:'.58rem', fontWeight:800,
+                padding:'1px 5px', borderRadius:99,
+                background: active ? 'var(--c)' : 'var(--c-bg)',
+                color: active ? 'var(--ink)' : 'var(--c)',
+                animation:'fade-up .18s ease both',
+              }}>
+                −{savings}%
+              </span>
+            )}
+          </div>
         )}
       </div>
 
-      {/* Description */}
-      <p style={{ fontSize:'.68rem', color:'var(--t-tertiary)', lineHeight:1.5, margin:0 }}>
-        {desc}
-      </p>
+      {/* Minimal savings note */}
+      {minimalSavings && estimatedSize != null && (
+        <p style={{ fontSize:'.63rem', color:'var(--t-tertiary)', margin:0 }}>
+          Minimal reduction at this level
+        </p>
+      )}
+
+      {/* Description (only when no size estimate yet) */}
+      {estimatedSize == null && (
+        <p style={{ fontSize:'.68rem', color:'var(--t-tertiary)', lineHeight:1.5, margin:0 }}>
+          {desc}
+        </p>
+      )}
     </button>
   )
 }
