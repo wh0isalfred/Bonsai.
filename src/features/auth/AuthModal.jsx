@@ -60,11 +60,10 @@ export default function AuthModal({ onClose, intent = 'signup' }) {
       {/* Panel */}
       <div style={{
         width: '100%', maxWidth: 400,
-        background:   'var(--c-cream)',
+        background:   'rgba(12,27,17,.5)',
         borderRadius: 'var(--r-xl)',
-        border:       '1px solid var(--c-clay)',
-        boxShadow:    'var(--shadow-lg)',
-        overflow:     'hidden',
+        border: '1px solid rgba(0,0,0,0.08)',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.18)',
         animation:    'fade-up .22s ease both',
       }}>
 
@@ -122,7 +121,7 @@ export default function AuthModal({ onClose, intent = 'signup' }) {
               {/* Google */}
               <button onClick={handleGoogle} disabled={loading} style={{
                 width: '100%', padding: '.65rem', borderRadius: 'var(--r-md)',
-                border: '1px solid var(--c-clay)', background: 'var(--c-cream)',
+                border: '1px solid white', background: 'var(--c-cream)',
                 fontFamily: 'var(--font-ui)', fontSize: '.82rem', fontWeight: 500,
                 color: 'var(--c-text)', cursor: 'pointer', marginBottom: '1rem',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
@@ -149,7 +148,7 @@ export default function AuthModal({ onClose, intent = 'signup' }) {
                     flex: 1, padding: '.35rem', borderRadius: 6, border: 'none',
                     fontFamily: 'var(--font-ui)', fontSize: '.78rem', fontWeight: 600,
                     cursor: 'pointer', transition: 'all var(--t-fast)',
-                    background: tab === id ? 'var(--c-cream)' : 'transparent',
+                    background: tab === id ? 'var(--c-bg-2)' : 'transparent',
                     color:      tab === id ? 'var(--c-text)' : 'var(--c-text-2)',
                     boxShadow:  tab === id ? 'var(--shadow-xs)' : 'none',
                   }}>
@@ -166,22 +165,29 @@ export default function AuthModal({ onClose, intent = 'signup' }) {
                        onChange={e => setPass(e.target.value)} />
 
                 {error && (
-                  <p style={{ fontSize: '.74rem', color: 'var(--c-error)', margin: 0,
-                              padding: '6px 10px', background: 'rgba(191,59,59,.07)',
-                              borderRadius: 'var(--r-sm)' }}>
+                  <p style={{
+  fontSize: '.78rem',
+  color: '#b42318',
+  margin: 0,
+  padding: '8px 10px',
+  background: '#fef3f2',
+  border: '1px solid #fecdca',
+  borderRadius: '8px',
+}}>
                     {error}
                   </p>
                 )}
 
                 <button type="submit" disabled={loading || !email || !pass} style={{
                   width: '100%', padding: '.7rem', borderRadius: 'var(--r-md)',
-                  border: 'none', background: 'var(--c-forest)', color: '#fff',
+                  border: 'none', background: '#2E7D32',
+boxShadow: '0 6px 16px rgba(46,125,50,0.25)', color: '#fff',
                   fontFamily: 'var(--font-ui)', fontSize: '.85rem', fontWeight: 600,
                   cursor: loading || !email || !pass ? 'not-allowed' : 'pointer',
                   opacity: loading || !email || !pass ? .55 : 1,
                   transition: 'opacity var(--t-fast), background var(--t-fast)',
                 }}
-                  onMouseEnter={e => { if (!loading) e.currentTarget.style.background = 'var(--c-canopy)' }}
+                  onMouseEnter={e => { if (!loading) e.currentTarget.style.background = '#1B5E20' }}
                   onMouseLeave={e => e.currentTarget.style.background = 'var(--c-forest)'}>
                   {loading ? 'Please wait…' : tab === 'in' ? 'Sign in' : 'Create account'}
                 </button>
@@ -215,16 +221,24 @@ function Field({ label, type, value, onChange }) {
       </label>
       <input type={type} value={value} onChange={onChange} autoComplete={type === 'password' ? 'current-password' : 'email'}
         style={{
-          width: '100%', padding: '.55rem .7rem',
-          borderRadius: 'var(--r-sm)', border: '1px solid var(--c-clay)',
-          background: 'var(--c-cream)', color: 'var(--c-text)',
-          fontFamily: 'var(--font-ui)', fontSize: '.84rem',
-          outline: 'none', transition: 'border-color var(--t-fast)',
-          boxSizing: 'border-box',
-        }}
-        onFocus={e => e.currentTarget.style.borderColor = 'var(--c-canopy)'}
-        onBlur={e => e.currentTarget.style.borderColor = 'var(--c-clay)'}
-      />
+  width: '100%',
+  padding: '.6rem .75rem',
+  borderRadius: '10px',
+  border: '1px solid rgba(0,0,0,0.15)',
+  background: '#fff',
+  color: '#111',
+  fontSize: '.9rem',
+  outline: 'none',
+  transition: 'all .15s ease',
+}}
+onFocus={e => {
+  e.currentTarget.style.borderColor = 'var(--c-forest)'
+  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(76,175,80,0.15)'
+}}
+onBlur={e => {
+  e.currentTarget.style.borderColor = 'rgba(0,0,0,0.15)'
+  e.currentTarget.style.boxShadow = 'none'
+}}      />
     </div>
   )
 }
