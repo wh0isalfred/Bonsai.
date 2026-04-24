@@ -39,7 +39,7 @@ export default function PricingPage({ onBack, onAuth }) {
       {/* Trust signals */}
       <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap',
                     gap: '1.5rem', marginTop: '2.5rem' }}>
-        {['Runs 100% in your browser', 'No credit card for free', 'Cancel anytime'].map(t => (
+        {['Runs 100% in your browser', 'No credit card to start free', '15 images free · unlimited with Pro', 'Cancel anytime'].map(t => (
           <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 5,
                                  fontSize: '.73rem', color: 'var(--t-tertiary)' }}>
             <span style={{ color: 'var(--c)', fontSize: '.7rem' }}>✓</span> {t}
@@ -239,24 +239,26 @@ const PLANS = [
       'Up to 15 images per batch',
       'JPEG, PNG, WebP, AVIF',
       'Before / after comparison',
-      '4 compression levels',
+      '4 compression presets',
       'ZIP + individual download',
-      '72-hour history',
-      '100% browser-based',
+      '72-hour compression history',
+      '100% browser-based — nothing uploaded',
     ],
   },
   {
     tier: 'pro', name: 'Pro', price: '$3', period: '/month',
     badge: 'Most popular', highlight: true, ctaPrimary: true,
-    desc: 'Unlock Pro Mode with full manual control, live preview, and permanent history.',
+    desc: 'Full manual control, live preview, and no limits — for professionals.',
     cta: 'Upgrade to Pro',
     features: [
       'Everything in Free',
+      'Unlimited images in Smart Mode',
       'Pro Mode — per-image editor',
-      'Unlimited images per session',
-      'Quality · blur · sharpen sliders',
-      'Resize & format conversion',
-      'Compress while editing others',
+      'Unlimited images in Pro Mode',
+      'Live before/after preview',
+      'Quality · blur · sharpen · resize sliders',
+      'Format conversion (WebP, AVIF, JPEG, PNG)',
+      'Compress in background while editing next',
       'Auto-download on completion',
       'Permanent compression history',
       'Re-download any past batch',
@@ -265,14 +267,14 @@ const PLANS = [
   {
     tier: 'supporter', name: 'Supporter', price: '$1', period: '/month',
     badge: null, highlight: false, ctaPrimary: false,
-    desc: 'Support independent development and unlock quality-of-life upgrades.',
+    desc: 'Support independent development and unlock key quality-of-life upgrades.',
     cta: 'Support Bonsai',
     features: [
-      'Higher batch limits',
-      'Faster processing priority',
-      'Early access to new features',
-      'No ads — ever',
-      'Support independent dev',
+      'Unlimited images in Smart Mode',
+      'Early access to new tools',
+      'No limits on batch size',
+      'Priority processing',
+      'Support independent development',
     ],
   },
 ]

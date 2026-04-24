@@ -369,8 +369,20 @@ export default function ProEditor({ onAuth }) {
       if (s?.result?.url) URL.revokeObjectURL(s.result.url)
       return prev.filter(x => x.id !== id)
     })
-    setActiveId(a => a === id ? null : a)
-  }, [])
+
+    /* If we removed the active session, advance to the next editing one */
+    setActiveId(current => {
+      if (current !== id) return current  // wasn't active — no change
+
+      /* Find next session to open from the current list before removal */
+      const remaining = sessions.filter(s => s.id !== id)
+      const next = remaining.find(s => s.status === 'editing')
+        ?? remaining.find(s => s.status === 'done')
+        ?? remaining[0]
+        ?? null
+      return next?.id ?? null
+    })
+  }, [sessions])
 
   /* ── Start over ───────────────────────────────────────────────── */
   const handleStartOver = useCallback(() => {
@@ -411,6 +423,7 @@ export default function ProEditor({ onAuth }) {
           session={active}
           onSettingsChange={handleSettingsChange}
           onCompress={handleCompress}
+          onRemove={() => handleRemove(active.id)}
           hasNext={sessions.some(s => s.id !== active.id && s.status === 'editing')} />
       )}
 
@@ -436,7 +449,7 @@ export default function ProEditor({ onAuth }) {
 }
 
 /* ── Editor panel ───────────────────────────────────────────────────── */
-function EditorPanel({ session, onSettingsChange, onCompress, hasNext }) {
+function EditorPanel({ session, onSettingsChange, onCompress, onRemove, hasNext }) {
   const { name, size, beforeUrl, previewUrl, previewLoading,
           settings, estimatedSize } = session
 
@@ -555,13 +568,39 @@ function EditorPanel({ session, onSettingsChange, onCompress, hasNext }) {
           </div>
         </div>
 
-        <button
-          onClick={onCompress}
-          className="btn btn-primary btn-sm"
-          style={{ flexShrink: 0 }}>
-          <LeafIcon />
-          {hasNext ? 'Compress & next' : 'Compress'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {/* Remove this image */}
+          <button
+            onClick={onRemove}
+            title="Remove image"
+            className="btn btn-ghost btn-sm"
+            style={{ color: 'var(--t-tertiary)', padding: '6px 10px' }}
+            onMouseEnter={e => {
+              e.currentTarget.style.color       = 'var(--error)'
+              e.currentTarget.style.borderColor = 'rgba(255,107,107,.3)'
+              e.currentTarget.style.background  = 'var(--error-bg)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.color       = 'var(--t-tertiary)'
+              e.currentTarget.style.borderColor = 'var(--border-2)'
+              e.currentTarget.style.background  = 'transparent'
+            }}>
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"
+                 stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+              <path d="M2 2l9 9M11 2L2 11"/>
+            </svg>
+            Remove
+          </button>
+
+          {/* Compress */}
+          <button
+            onClick={onCompress}
+            className="btn btn-primary btn-sm"
+            style={{ flexShrink: 0 }}>
+            <LeafIcon />
+            {hasNext ? 'Compress & next' : 'Compress'}
+          </button>
+        </div>
       </div>
 
       {/* Body: compare + controls */}

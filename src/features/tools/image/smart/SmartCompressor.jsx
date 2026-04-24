@@ -19,12 +19,14 @@ import DropZone     from '../../../../components/ui/DropZone'
 import PresetPicker from './PresetPicker'
 import ResultsGrid  from './ResultsGrid'
 import { useHistoryStore } from '../../../../store/userHistoryStore'
+import { useAuthStore }    from '../../../../store/useAuthStore'
 import { useDownloads }    from '../../../../hooks/useDownloads'
 import { useAutoDownload } from '../../../../hooks/useAutoDownload'
 import { getPresetById }   from '../../../../config/presets'
 import { formatBytes }     from '../../../../utils/formatBytes'
 
-const SMART_LIMIT = 15
+const FREE_LIMIT = 15   // free users
+const PRO_LIMIT  = null // null = unlimited
 
 let _seq = 0
 const nextId = () => `sc_${Date.now()}_${++_seq}`
@@ -37,13 +39,17 @@ export default function SmartCompressor() {
   const [preset,       setPreset]       = useState('high')
   const [autoDownload, setAutoDownload] = useState(false)
   const [limitWarn,    setLimitWarn]    = useState(false)
-  /* Estimated sizes per preset: { extreme: bytes, high: bytes, ... } */
   const [presetSizes,  setPresetSizes]  = useState({})
   const [estimating,   setEstimating]   = useState(false)
 
   const workers    = useRef(new Map())
   const savedRef   = useRef(false)
-  const estWorkers = useRef(new Map())  // preset id → worker for estimation
+  const estWorkers = useRef(new Map())
+
+  const plan = useAuthStore(s => s.plan)
+  const isPaid = plan === 'pro' || plan === 'supporter'
+  /* null = no limit (paid), number = cap (free) */
+  const SMART_LIMIT = isPaid ? PRO_LIMIT : FREE_LIMIT
 
   const { addBatch }    = useHistoryStore()
   const { downloadZip } = useDownloads()
@@ -180,7 +186,11 @@ export default function SmartCompressor() {
   const handleDrop = useCallback((incoming) => {
     setLimitWarn(false)
     setFiles(prev => {
-      const remaining = SMART_LIMIT - prev.length
+      /* null limit = unlimited (paid users) */
+      const remaining = SMART_LIMIT === null
+        ? incoming.length
+        : SMART_LIMIT - prev.length
+
       if (remaining <= 0) { setLimitWarn(true); return prev }
 
       const existingKeys = new Set(prev.map(f => `${f.name}:${f.size}`))
@@ -201,10 +211,10 @@ export default function SmartCompressor() {
           error:     null,
         }))
 
-      if (incoming.length > remaining) setLimitWarn(true)
+      if (SMART_LIMIT !== null && incoming.length > remaining) setLimitWarn(true)
       return [...prev, ...toAdd]
     })
-  }, [])
+  }, [SMART_LIMIT])
 
   /* ── Remove one file ──────────────────────────────────────────────── */
   const handleRemove = useCallback((id) => {
@@ -328,10 +338,10 @@ export default function SmartCompressor() {
         }}>
           <WarningIcon />
           <p style={{ fontSize: '.75rem', color: 'var(--error)', margin: 0 }}>
-            Smart mode supports up to {SMART_LIMIT} images.
+            Smart mode supports up to {FREE_LIMIT} images for free users.
             {' '}
             <span style={{ color: 'var(--t-tertiary)' }}>
-              Switch to Pro for unlimited.
+              Upgrade to Pro for unlimited.
             </span>
           </p>
         </div>
@@ -342,6 +352,8 @@ export default function SmartCompressor() {
         <StagedList
           files={idleFiles}
           total={files.length}
+          limit={SMART_LIMIT}
+          isPaid={isPaid}
           onRemove={handleRemove} />
       )}
 
@@ -362,7 +374,7 @@ export default function SmartCompressor() {
 
       {/* ── Results grid (compressing + done + error) ─────────────── */}
       {files.some(f => f.status !== 'idle') && (
-        <ResultsGrid files={files} />
+        <ResultsGrid files={files} onRemove={handleRemove} />
       )}
 
       {/* ── Bottom action bar ─────────────────────────────────────── */}
@@ -386,7 +398,7 @@ export default function SmartCompressor() {
    ══════════════════════════════════════════════════════════════════════ */
 
 /* ── Staged file list ───────────────────────────────────────────────── */
-function StagedList({ files, total, onRemove }) {
+function StagedList({ files, total, limit, isPaid, onRemove }) {
   return (
     <div style={{
       background:   'var(--surface)',
@@ -407,7 +419,9 @@ function StagedList({ files, total, onRemove }) {
           {files.length} image{files.length !== 1 ? 's' : ''} ready
         </span>
         <span style={{ fontSize: '.64rem', color: 'var(--t-tertiary)' }}>
-          {SMART_LIMIT - total} of {SMART_LIMIT} slots free
+          {isPaid
+            ? <span style={{ color: 'var(--c)', fontWeight: 600 }}>Unlimited</span>
+            : `${limit - total} of ${limit} slots free`}
         </span>
       </div>
 

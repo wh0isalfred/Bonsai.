@@ -270,7 +270,7 @@ function BelowFold({ onPricing, onAuth }) {
             className="stagger">
             {[
               { n:'01', title:'Drop your images',
-                desc:'Up to 15 in Smart, unlimited in Pro. JPEG, PNG, WebP, AVIF.',
+                desc:'Free: up to 15 images per batch. Pro & Supporter: unlimited in both Smart and Pro modes. JPEG, PNG, WebP, AVIF.',
                 img: uploadIllus, alt:'Upload' },
               { n:'02', title:'Set your level',
                 desc:'Smart: pick a preset. Pro: fine-tune with live before/after preview.',

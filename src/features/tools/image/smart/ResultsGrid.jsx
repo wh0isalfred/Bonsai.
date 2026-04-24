@@ -24,8 +24,7 @@ function pct(orig, comp) {
   return Math.round((1 - comp / orig) * 100)
 }
 
-export default function ResultsGrid({ files }) {
-  /* Only show files that have been submitted for compression */
+export default function ResultsGrid({ files, onRemove }) {
   const active = files.filter(f =>
     f.status === 'compressing' || f.status === 'done' || f.status === 'error'
   )
@@ -39,12 +38,17 @@ export default function ResultsGrid({ files }) {
     setExpandedId(prev => prev === file.id ? null : file.id)
   }, [])
 
-  const doneCount = active.filter(f => f.status === 'done').length
+  // If expanded card gets removed, close the compare panel
+  const handleRemove = useCallback((id) => {
+    if (expandedId === id) setExpandedId(null)
+    onRemove?.(id)
+  }, [expandedId, onRemove])
+
+  const doneCount  = active.filter(f => f.status === 'done').length
   const totalCount = active.length
 
   return (
     <div>
-      {/* Section label */}
       <p style={{
         fontSize:      '.6rem',
         fontWeight:    700,
@@ -58,18 +62,17 @@ export default function ResultsGrid({ files }) {
           : `Results — ${doneCount} image${doneCount !== 1 ? 's' : ''} compressed`}
       </p>
 
-      {/* Horizontal card row */}
       <div className="h-scroll" style={{ paddingBottom: 6 }}>
         {active.map(f => (
           <ResultCard
             key={f.id}
             file={f}
             expanded={expandedId === f.id}
-            onClick={handleCardClick} />
+            onClick={handleCardClick}
+            onRemove={handleRemove} />
         ))}
       </div>
 
-      {/* Expanded compare panel */}
       {expandedFile && (
         <ExpandedCompare
           file={expandedFile}
@@ -80,15 +83,15 @@ export default function ResultsGrid({ files }) {
 }
 
 /* ── Result card ────────────────────────────────────────────────────── */
-function ResultCard({ file, expanded, onClick }) {
+function ResultCard({ file, expanded, onClick, onRemove }) {
   const { downloadOne } = useDownloads()
-  const [side, setSide] = useState('after') // 'before' | 'after'
+  const [side, setSide] = useState('after')
 
-  const isDone       = file.status === 'done'
-  const isCompressing= file.status === 'compressing'
-  const isError      = file.status === 'error'
-  const savings      = isDone ? pct(file.size, file.result?.compressedSize) : 0
-  const fmt          = MIME_LABEL[file.result?.outputMime] ?? ''
+  const isDone        = file.status === 'done'
+  const isCompressing = file.status === 'compressing'
+  const isError       = file.status === 'error'
+  const savings       = isDone ? pct(file.size, file.result?.compressedSize) : 0
+  const fmt           = MIME_LABEL[file.result?.outputMime] ?? ''
 
   return (
     <div
@@ -97,14 +100,49 @@ function ResultCard({ file, expanded, onClick }) {
         flexShrink:    0,
         width:         182,
         borderRadius:  'var(--r-md)',
-        border:        `1px solid ${expanded
-          ? 'var(--c-border)'
-          : isDone ? 'var(--border)' : 'var(--border)'}`,
+        border:        `1px solid ${expanded ? 'var(--c-border)' : 'var(--border)'}`,
         background:    expanded ? 'var(--c-bg)' : 'var(--surface)',
         overflow:      'hidden',
         cursor:        isDone ? 'pointer' : 'default',
         transition:    'border-color var(--t-fast), background var(--t-fast)',
+        position:      'relative',
       }}>
+
+      {/* ── Remove button — top-right, always visible on hover ── */}
+      <button
+        onClick={e => { e.stopPropagation(); onRemove?.(file.id) }}
+        title="Remove"
+        style={{
+          position:       'absolute',
+          top:            6,
+          left:           6,
+          zIndex:         30,
+          width:          22,
+          height:         22,
+          borderRadius:   'var(--r-xs)',
+          border:         'none',
+          background:     'rgba(14,17,16,.65)',
+          color:          'rgba(255,255,255,.75)',
+          cursor:         'pointer',
+          display:        'flex',
+          alignItems:     'center',
+          justifyContent: 'center',
+          backdropFilter: 'blur(4px)',
+          transition:     'background var(--t-fast), color var(--t-fast)',
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.background = 'rgba(255,107,107,.8)'
+          e.currentTarget.style.color      = '#fff'
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.background = 'rgba(14,17,16,.65)'
+          e.currentTarget.style.color      = 'rgba(255,255,255,.75)'
+        }}>
+        <svg width="9" height="9" viewBox="0 0 9 9" fill="none"
+             stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+          <path d="M1 1l7 7M8 1L1 8"/>
+        </svg>
+      </button>
 
       {/* ── Image area ─────────────────────────────────────────── */}
       <div style={{ position: 'relative', height: 118, background: 'var(--surface-2)', overflow: 'hidden' }}>
