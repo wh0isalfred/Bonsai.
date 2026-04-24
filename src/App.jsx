@@ -157,15 +157,15 @@ function Navbar({ page, onTool, onPricing, onHow, onAuth }) {
                 email={user.email}
                 open={userOpen}
                 onToggle={() => setUserOpen(v => !v)}
-                onUpgrade={() => { setUserOpen(false); onAuth('upgrade') }}
+                onUpgrade={() => { setUserOpen(false); onPricing() }}
                 onSignOut={async () => { setUserOpen(false); await signOut() }} />
             ) : (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <button className="btn btn-ghost btn-xs"
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button className="btn btn-ghost btn-sm"
                   onClick={() => onAuth('signin')}>
                   Sign in
                 </button>
-                <button className="btn btn-primary btn-xs"
+                <button className="btn btn-primary btn-sm"
                   onClick={() => onAuth('signup')}>
                   Get started
                 </button>
@@ -177,7 +177,7 @@ function Navbar({ page, onTool, onPricing, onHow, onAuth }) {
           {/* NOTE: no display in inline style — CSS class owns that */}
           <div className="show-mobile" style={{ alignItems: 'center', gap: 8, flexShrink: 0 }}>
             {!user && (
-              <button className="btn btn-primary btn-xs"
+              <button className="btn btn-primary btn-sm"
                 onClick={() => onAuth('signup')}>
                 Get started
               </button>
@@ -261,7 +261,7 @@ function Navbar({ page, onTool, onPricing, onHow, onAuth }) {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{
                         width: 28, height: 28, borderRadius: '50%',
-                        background: 'var(--c)', color: 'var(--ink)',
+                        background: '#C9913A', color: '#fff',
                         fontSize: '.65rem', fontWeight: 800, flexShrink: 0,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                       }}>
@@ -281,7 +281,7 @@ function Navbar({ page, onTool, onPricing, onHow, onAuth }) {
                   {plan !== 'pro' && (
                     <button
                       className="btn btn-primary btn-block"
-                      onClick={() => { closeMenu(); onAuth('upgrade') }}>
+                      onClick={() => { closeMenu(); onPricing() }}>
                       Upgrade to Pro
                     </button>
                   )}
@@ -355,18 +355,18 @@ const UserChip = forwardRef(function UserChip(
           }
         }}>
 
-        {/* Avatar */}
+        {/* Avatar — warm amber, distinct from celadon accent */}
         <span style={{
           width: 26, height: 26, borderRadius: '50%',
-          background:   'var(--c)',
-          color:        'var(--ink)',
-          fontSize:     '.62rem',
-          fontWeight:   800,
-          display:      'flex',
-          alignItems:   'center',
+          background:    '#C9913A',
+          color:         '#fff',
+          fontSize:      '.62rem',
+          fontWeight:    800,
+          display:       'flex',
+          alignItems:    'center',
           justifyContent:'center',
-          flexShrink:   0,
-          letterSpacing:'.02em',
+          flexShrink:    0,
+          letterSpacing: '.02em',
         }}>
           {initials}
         </span>
@@ -508,7 +508,7 @@ function Wordmark() {
         fontFamily: 'var(--font-brand)',
         fontStyle:  'italic',
         fontWeight: 600,
-        fontSize:   '1.6rem',
+        fontSize:   '1.1rem',
         color:      'var(--c)',
       }}>
         Bon
@@ -516,7 +516,7 @@ function Wordmark() {
       <span style={{
         fontFamily: 'var(--font-brand)',
         fontWeight: 800,
-        fontSize:   '1.6rem',
+        fontSize:   '1.1rem',
         color:      'var(--t-primary)',
       }}>
         sai

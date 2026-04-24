@@ -1,7 +1,11 @@
 import { useState } from 'react'
 // src/pages/PricingPage.jsx
 
+import { useAuthStore } from '../store/useAuthStore'
+
 export default function PricingPage({ onBack, onAuth }) {
+  const { user, plan } = useAuthStore()
+
   return (
     <div style={{ maxWidth: 920, margin: '0 auto', padding: '3rem 1.25rem 6rem' }}>
 
@@ -33,7 +37,15 @@ export default function PricingPage({ onBack, onAuth }) {
       {/* Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))',
                     gap: '1rem', alignItems: 'start' }}>
-        {PLANS.map(p => <PlanCard key={p.name} plan={p} />)}
+        {PLANS.map(p => (
+          <PlanCard
+            key={p.name}
+            plan={p}
+            currentPlan={plan}
+            isLoggedIn={!!user}
+            onAuth={onAuth}
+            onBack={onBack} />
+        ))}
       </div>
 
       {/* Trust signals */}
@@ -51,8 +63,39 @@ export default function PricingPage({ onBack, onAuth }) {
 }
 
 /* ── Plan card ────────────────────────────────────────────────────────────── */
-function PlanCard({ plan }) {
+function PlanCard({ plan, currentPlan, isLoggedIn, onAuth, onBack }) {
   const hi = plan.highlight
+
+  /* Resolve what the CTA button should do */
+  const isCurrent = currentPlan === plan.tier
+
+  function handleCta() {
+    if (isCurrent) return  // button is disabled
+
+    if (plan.tier === 'free') {
+      /* Free plan — just go back to the tool */
+      onBack()
+      return
+    }
+
+    if (!isLoggedIn) {
+      /* Not logged in — need an account first */
+      onAuth('signup')
+      return
+    }
+
+    /* Logged in but not on this plan — Stripe not integrated yet */
+    /* For now: show a clear "coming soon" alert */
+    alert('Payment integration coming soon. We\'ll notify you when it\'s ready!')
+  }
+
+  const ctaLabel = isCurrent
+    ? 'Current plan'
+    : plan.tier === 'free'
+      ? 'Start compressing'
+      : !isLoggedIn
+        ? 'Get started'
+        : plan.cta
 
   return (
     <div style={{
@@ -128,22 +171,29 @@ function PlanCard({ plan }) {
 
       {/* CTA */}
       <div style={{ padding: '1rem 1.6rem 1.6rem' }}>
-        <button style={{
-          width: '100%', padding: '.7rem', border: 'none',
-          borderRadius: 'var(--r-md)', fontFamily: 'var(--font-ui)',
-          fontSize: '.83rem', fontWeight: 600, cursor: 'pointer',
-          background: hi ? 'var(--c)'
-                    : plan.ctaPrimary ? 'var(--ink)'
-                    : 'transparent',
-          color:      hi ? 'var(--t-primary)'
-                    : plan.ctaPrimary ? '#fff'
-                    : 'var(--t-primary)',
-          outline:    (!hi && !plan.ctaPrimary) ? '1px solid var(--border)' : 'none',
-          transition: 'opacity var(--t-fast)',
-        }}
-          onMouseEnter={e => e.currentTarget.style.opacity = '.82'}
-          onMouseLeave={e => e.currentTarget.style.opacity = '1'}>
-          {plan.cta}
+        <button
+          onClick={handleCta}
+          disabled={isCurrent}
+          style={{
+            width: '100%', padding: '.7rem', border: 'none',
+            borderRadius: 'var(--r-md)', fontFamily: 'var(--font-ui)',
+            fontSize: '.83rem', fontWeight: 600,
+            cursor: isCurrent ? 'default' : 'pointer',
+            background: isCurrent ? 'var(--surface-3)'
+                      : hi       ? 'var(--c)'
+                      : plan.ctaPrimary ? 'var(--ink)'
+                      : 'transparent',
+            color:      isCurrent ? 'var(--t-tertiary)'
+                      : hi       ? 'var(--ink)'
+                      : plan.ctaPrimary ? '#fff'
+                      : 'var(--t-primary)',
+            outline:    (!hi && !plan.ctaPrimary && !isCurrent) ? '1px solid var(--border)' : 'none',
+            opacity:    isCurrent ? .6 : 1,
+            transition: 'opacity var(--t-fast)',
+          }}
+          onMouseEnter={e => { if (!isCurrent) e.currentTarget.style.opacity = '.82' }}
+          onMouseLeave={e => { e.currentTarget.style.opacity = isCurrent ? '.6' : '1' }}>
+          {ctaLabel}
         </button>
       </div>
     </div>
