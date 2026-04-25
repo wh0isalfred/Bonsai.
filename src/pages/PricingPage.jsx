@@ -1,10 +1,55 @@
-import { useState } from 'react'
 // src/pages/PricingPage.jsx
-
+import { useState } from 'react'
 import { useAuthStore } from '../store/useAuthStore'
 
+const PRICE_IDS = {
+  pro:       import.meta.env.VITE_STRIPE_PRO_PRICE_ID       ?? '',
+  supporter: import.meta.env.VITE_STRIPE_SUPPORTER_PRICE_ID ?? '',
+}
+
 export default function PricingPage({ onBack, onAuth }) {
-  const { user, plan } = useAuthStore()
+  const { user, plan, session } = useAuthStore()
+  const [checkoutLoading, setCheckoutLoading] = useState(null) // tier id being loaded
+
+  async function handleUpgrade(tier) {
+    const priceId = PRICE_IDS[tier]
+
+    if (!priceId) {
+      alert('Payment not configured yet. Check your .env for VITE_STRIPE_' + tier.toUpperCase() + '_PRICE_ID')
+      return
+    }
+
+    setCheckoutLoading(tier)
+    try {
+      /* Call the Supabase Edge Function */
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const res = await fetch(
+        `${supabaseUrl}/functions/v1/create-checkout-session`,
+        {
+          method:  'POST',
+          headers: {
+            'Content-Type':  'application/json',
+            'Authorization': `Bearer ${session?.access_token ?? ''}`,
+          },
+          body: JSON.stringify({ priceId }),
+        }
+      )
+
+      const data = await res.json()
+
+      if (!res.ok || !data.url) {
+        throw new Error(data.error ?? 'Failed to create checkout session')
+      }
+
+      /* Redirect to Stripe Checkout */
+      window.location.href = data.url
+
+    } catch (err) {
+      console.error('[checkout]', err)
+      alert(err.message ?? 'Something went wrong. Please try again.')
+      setCheckoutLoading(null)
+    }
+  }
 
   return (
     <div style={{ maxWidth: 920, margin: '0 auto', padding: '3rem 1.25rem 6rem' }}>
@@ -44,7 +89,9 @@ export default function PricingPage({ onBack, onAuth }) {
             currentPlan={plan}
             isLoggedIn={!!user}
             onAuth={onAuth}
-            onBack={onBack} />
+            onBack={onBack}
+            onUpgrade={handleUpgrade}
+            loadingTier={checkoutLoading} />
         ))}
       </div>
 
@@ -63,39 +110,27 @@ export default function PricingPage({ onBack, onAuth }) {
 }
 
 /* ── Plan card ────────────────────────────────────────────────────────────── */
-function PlanCard({ plan, currentPlan, isLoggedIn, onAuth, onBack }) {
-  const hi = plan.highlight
-
-  /* Resolve what the CTA button should do */
+function PlanCard({ plan, currentPlan, isLoggedIn, onAuth, onBack, onUpgrade, loadingTier }) {
+  const hi        = plan.highlight
   const isCurrent = currentPlan === plan.tier
+  const isLoading = loadingTier === plan.tier
 
   function handleCta() {
-    if (isCurrent) return  // button is disabled
+    if (isCurrent || isLoading) return
 
-    if (plan.tier === 'free') {
-      /* Free plan — just go back to the tool */
-      onBack()
-      return
-    }
+    if (plan.tier === 'free') { onBack(); return }
 
-    if (!isLoggedIn) {
-      /* Not logged in — need an account first */
-      onAuth('signup')
-      return
-    }
+    if (!isLoggedIn) { onAuth('signup'); return }
 
-    /* Logged in but not on this plan — Stripe not integrated yet */
-    /* For now: show a clear "coming soon" alert */
-    alert('Payment integration coming soon. We\'ll notify you when it\'s ready!')
+    /* Logged in — go to Stripe checkout */
+    onUpgrade(plan.tier)
   }
 
-  const ctaLabel = isCurrent
-    ? 'Current plan'
-    : plan.tier === 'free'
-      ? 'Start compressing'
-      : !isLoggedIn
-        ? 'Get started'
-        : plan.cta
+  const ctaLabel = isCurrent        ? 'Current plan'
+    : isLoading                     ? 'Redirecting to Stripe…'
+    : plan.tier === 'free'          ? 'Start compressing'
+    : !isLoggedIn                   ? 'Get started'
+    : plan.cta
 
   return (
     <div style={{
@@ -173,12 +208,12 @@ function PlanCard({ plan, currentPlan, isLoggedIn, onAuth, onBack }) {
       <div style={{ padding: '1rem 1.6rem 1.6rem' }}>
         <button
           onClick={handleCta}
-          disabled={isCurrent}
+          disabled={isCurrent || isLoading}
           style={{
             width: '100%', padding: '.7rem', border: 'none',
             borderRadius: 'var(--r-md)', fontFamily: 'var(--font-ui)',
             fontSize: '.83rem', fontWeight: 600,
-            cursor: isCurrent ? 'default' : 'pointer',
+            cursor: isCurrent || isLoading ? 'default' : 'pointer',
             background: isCurrent ? 'var(--surface-3)'
                       : hi       ? 'var(--c)'
                       : plan.ctaPrimary ? 'var(--ink)'
@@ -188,11 +223,21 @@ function PlanCard({ plan, currentPlan, isLoggedIn, onAuth, onBack }) {
                       : plan.ctaPrimary ? '#fff'
                       : 'var(--t-primary)',
             outline:    (!hi && !plan.ctaPrimary && !isCurrent) ? '1px solid var(--border)' : 'none',
-            opacity:    isCurrent ? .6 : 1,
+            opacity:    isCurrent ? .6 : isLoading ? .8 : 1,
+            display:    'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
             transition: 'opacity var(--t-fast)',
           }}
-          onMouseEnter={e => { if (!isCurrent) e.currentTarget.style.opacity = '.82' }}
-          onMouseLeave={e => { e.currentTarget.style.opacity = isCurrent ? '.6' : '1' }}>
+          onMouseEnter={e => { if (!isCurrent && !isLoading) e.currentTarget.style.opacity = '.82' }}
+          onMouseLeave={e => { e.currentTarget.style.opacity = isCurrent ? '.6' : isLoading ? '.8' : '1' }}>
+          {isLoading && (
+            <span style={{
+              display: 'inline-block', width: 13, height: 13,
+              borderRadius: '50%',
+              border: `2px solid ${hi ? 'rgba(14,17,16,.3)' : 'var(--border-2)'}`,
+              borderTopColor: hi ? 'var(--ink)' : 'var(--c)',
+              animation: 'spin .7s linear infinite',
+            }} />
+          )}
           {ctaLabel}
         </button>
       </div>
