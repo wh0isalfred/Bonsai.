@@ -161,11 +161,11 @@ function Navbar({ page, onTool, onPricing, onHow, onAuth }) {
                 onSignOut={async () => { setUserOpen(false); await signOut() }} />
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button className="btn btn-ghost btn-sm"
+                <button className="btn btn-ghost btn-xl"
                   onClick={() => onAuth('signin')}>
                   Sign in
                 </button>
-                <button className="btn btn-primary btn-sm"
+                <button className="btn btn-primary btn-xl"
                   onClick={() => onAuth('signup')}>
                   Get started
                 </button>
@@ -177,7 +177,7 @@ function Navbar({ page, onTool, onPricing, onHow, onAuth }) {
           {/* NOTE: no display in inline style — CSS class owns that */}
           <div className="show-mobile" style={{ alignItems: 'center', gap: 8, flexShrink: 0 }}>
             {!user && (
-              <button className="btn btn-primary btn-sm"
+              <button className="btn btn-primary btn-xl"
                 onClick={() => onAuth('signup')}>
                 Get started
               </button>
