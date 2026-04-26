@@ -91,7 +91,7 @@ self.onmessage = async ({ data }) => {
     post('progress', { progress: 64 })
 
     /* ── 7. Resolve output format ────────────────────────────────── */
-    const outputMime = await resolveOutputMime(mime, settings, hasAlpha)
+    let outputMime = await resolveOutputMime(mime, settings, hasAlpha)
     const quality    = resolveQuality(outputMime, settings)
 
     /* ── 8. Flatten alpha for JPEG ───────────────────────────────── */
