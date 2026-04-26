@@ -696,7 +696,7 @@ function DoneScreen({ kind, email, onClose }) {
       icon:    <EnvelopeIcon />,
       title:   'Check your email',
       message: `We sent a confirmation link to ${email}. Click it to activate your account.`,
-      note:    'Can't find it? Check your spam folder.',
+      note:    "Can't find it? Check your spam folder.",
       action:  null,
     },
     signin: {
@@ -710,7 +710,7 @@ function DoneScreen({ kind, email, onClose }) {
       icon:    <EnvelopeIcon />,
       title:   'Reset link sent',
       message: `We sent a password reset link to ${email}.`,
-      note:    'The link expires in 1 hour. Check your spam if it doesn't arrive.',
+      note:    "The link expires in 1 hour. Check your spam if it doesn't arrive.",
       action:  null,
     },
   }
