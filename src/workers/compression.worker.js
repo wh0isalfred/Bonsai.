@@ -118,7 +118,11 @@ self.onmessage = async ({ data }) => {
 
     post('progress', { progress: 86 })
 
-    /* ── 10. Guarantee smaller output for lossy ──────────────────── */
+    /* ── 10. Guarantee output is never larger than original ─────────
+       If the encoded blob is bigger than the source file, we try a
+       binary search at lower quality. If even that fails (e.g. the
+       image is already maximally compressed), we return the original
+       file unchanged rather than giving the user a larger file. */
     if (
       (settings.targetSizeKb ?? 0) === 0 &&
       settings.mode !== 'lossless' &&
@@ -128,7 +132,16 @@ self.onmessage = async ({ data }) => {
       const fallback = await binarySearchQuality(
         encodeCanvas, outputMime, file.size - 1, quality ?? 0.82
       )
-      if (fallback.size < blob.size) blob = fallback
+
+      if (fallback.size < file.size) {
+        blob = fallback
+      } else {
+        /* Even the most aggressive encode is larger — return original.
+           Change outputMime to match the original so the file extension
+           is correct and the user isn't confused. */
+        blob = file
+        outputMime = mime  // restore original mime type
+      }
     }
 
     /* ── 11. Strip metadata ──────────────────────────────────────── */

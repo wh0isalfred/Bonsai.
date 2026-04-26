@@ -82,7 +82,7 @@ export const PRESETS = [
     qualityBar: 0.88,
     settings: {
       quality:       0.93,
-      outputFormat:  'webp',
+      outputFormat:  'original',
       mode:          'lossy',
       maxWidthPx:    0,
       stripMetadata: false,
