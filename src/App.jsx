@@ -18,6 +18,7 @@ export default function App() {
   const [page,       setPage]       = useState('tool')
   const [showAuth,   setShowAuth]   = useState(false)
   const [authIntent, setAuthIntent] = useState('signup')
+  const [toast,      setToast]      = useState(null)  // { type, message }
 
   const openAuth = useCallback((intent = 'signup') => {
     setAuthIntent(intent)
@@ -26,6 +27,22 @@ export default function App() {
 
   const goTool    = useCallback(() => setPage('tool'), [])
   const goPricing = useCallback(() => setPage('pricing'), [])
+
+  /* Handle Stripe return — ?checkout=success or ?checkout=cancelled */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const checkout = params.get('checkout')
+    if (checkout === 'success') {
+      /* Clean up URL, show success toast */
+      window.history.replaceState({}, '', window.location.pathname)
+      setToast({ type: 'success', message: '🎉 Welcome to Pro! Your plan has been upgraded.' })
+      /* Refresh auth profile so plan updates immediately */
+      useAuthStore.getState().init()
+    } else if (checkout === 'cancelled') {
+      window.history.replaceState({}, '', window.location.pathname)
+      setToast({ type: 'info', message: 'Checkout cancelled — no charge was made.' })
+    }
+  }, [])
   const goHow     = useCallback(() => {
     setPage('tool')
     // Give ToolPage one frame to mount before scrolling
@@ -58,6 +75,14 @@ export default function App() {
         <AuthModal
           intent={authIntent}
           onClose={() => setShowAuth(false)} />
+      )}
+
+      {/* Stripe return toast */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onDismiss={() => setToast(null)} />
       )}
     </div>
   )
@@ -422,73 +447,119 @@ const UserChip = forwardRef(function UserChip(
    ══════════════════════════════════════════════════════════════════════ */
 function Footer({ onPricing, onHow, onAuth }) {
   return (
-    <footer style={{ borderTop: '1px solid var(--border)', padding: '2rem 1.25rem', marginTop: 'auto' }}>
+    <footer style={{
+      borderTop:  '1px solid var(--border)',
+      marginTop:  'auto',
+      padding:    'clamp(1.5rem, 4vw, 2.5rem) clamp(1rem, 4vw, 1.5rem)',
+    }}>
       <div style={{ maxWidth: 960, margin: '0 auto' }}>
 
-        {/* Main row — stacks via CSS */}
-        <div className="footer-grid">
+        {/* Top section — responsive grid */}
+        <div style={{
+          display:             'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+          gap:                 'clamp(1.25rem, 3vw, 2rem)',
+          marginBottom:        'clamp(1.25rem, 3vw, 1.75rem)',
+        }}>
 
-          {/* Brand */}
-          <div className="footer-col-brand">
-            <div style={{ marginBottom: 6 }}>
+          {/* Brand col */}
+          <div>
+            <div style={{ marginBottom: 8 }}>
               <Wordmark />
             </div>
-            <p style={{ fontSize: '.7rem', color: 'var(--t-tertiary)', lineHeight: 1.55, maxWidth: 200 }}>
-              Professional compression refined to precision. Inspired by the art of bonsai.
+            <p style={{
+              fontSize:  '.7rem',
+              color:     'var(--t-tertiary)',
+              lineHeight: 1.6,
+              margin:    0,
+              maxWidth:  220,
+            }}>
+              Professional compression refined to precision.
+              Inspired by the art of bonsai.
             </p>
           </div>
 
-          {/* Links */}
-          <div className="footer-col-links" style={{ display: 'flex', flexWrap: 'wrap', gap: '.4rem 1.5rem', alignItems: 'flex-start', paddingTop: 2 }}>
-            {[
-              { label: 'How it works', fn: onHow },
-              { label: 'Pricing',      fn: onPricing },
-              { label: 'Privacy',      fn: null },
-              { label: 'Terms',        fn: null },
-            ].map(l => (
-              <button key={l.label}
-                onClick={l.fn ?? undefined}
-                style={{
-                  background:  'none',
-                  border:      'none',
-                  fontFamily:  'var(--font-ui)',
-                  fontSize:    '.74rem',
-                  color:       'var(--t-tertiary)',
-                  cursor:      l.fn ? 'pointer' : 'default',
-                  padding:     0,
-                  transition:  'color var(--t-fast)',
-                }}
-                onMouseEnter={e => l.fn && (e.currentTarget.style.color = 'var(--t-secondary)')}
-                onMouseLeave={e => l.fn && (e.currentTarget.style.color = 'var(--t-tertiary)')}>
-                {l.label}
-              </button>
-            ))}
+          {/* Nav links col */}
+          <div>
+            <p style={{
+              fontSize:      '.6rem',
+              fontWeight:    700,
+              letterSpacing: '.1em',
+              textTransform: 'uppercase',
+              color:         'var(--t-tertiary)',
+              margin:        '0 0 .75rem',
+            }}>
+              Links
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem' }}>
+              {[
+                { label: 'How it works', fn: onHow },
+                { label: 'Pricing',      fn: onPricing },
+                { label: 'Privacy',      fn: null },
+                { label: 'Terms',        fn: null },
+              ].map(l => (
+                <button key={l.label}
+                  onClick={l.fn ?? undefined}
+                  style={{
+                    background:  'none',
+                    border:      'none',
+                    fontFamily:  'var(--font-ui)',
+                    fontSize:    '.76rem',
+                    color:       'var(--t-tertiary)',
+                    cursor:      l.fn ? 'pointer' : 'default',
+                    padding:     0,
+                    textAlign:   'left',
+                    transition:  'color var(--t-fast)',
+                    width:       'fit-content',
+                  }}
+                  onMouseEnter={e => l.fn && (e.currentTarget.style.color = 'var(--t-secondary)')}
+                  onMouseLeave={e => l.fn && (e.currentTarget.style.color = 'var(--t-tertiary)')}>
+                  {l.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {/* Privacy badge */}
-          <div className="footer-col-badge" style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 2 }}>
-            <ShieldIcon />
-            <span style={{ fontSize: '.68rem', color: 'var(--t-tertiary)' }}>
-              Images never leave your device
-            </span>
+          {/* Privacy col */}
+          <div>
+            <p style={{
+              fontSize:      '.6rem',
+              fontWeight:    700,
+              letterSpacing: '.1em',
+              textTransform: 'uppercase',
+              color:         'var(--t-tertiary)',
+              margin:        '0 0 .75rem',
+            }}>
+              Privacy
+            </p>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 7 }}>
+              <ShieldIcon />
+              <p style={{
+                fontSize:   '.72rem',
+                color:      'var(--t-tertiary)',
+                lineHeight: 1.55,
+                margin:     0,
+              }}>
+                Images never leave your device. All compression runs locally in your browser.
+              </p>
+            </div>
           </div>
         </div>
 
         {/* Bottom rule */}
         <div style={{
-          marginTop:      '1.5rem',
-          paddingTop:     '1rem',
-          borderTop:      '1px solid var(--border)',
-          display:        'flex',
-          alignItems:     'center',
+          paddingTop:  '1rem',
+          borderTop:   '1px solid var(--border)',
+          display:     'flex',
+          alignItems:  'center',
           justifyContent: 'space-between',
-          flexWrap:       'wrap',
-          gap:            '.5rem',
+          flexWrap:    'wrap',
+          gap:         '.5rem .75rem',
         }}>
-          <p style={{ fontSize: '.65rem', color: 'var(--t-tertiary)', margin: 0 }}>
+          <p style={{ fontSize: '.64rem', color: 'var(--t-tertiary)', margin: 0 }}>
             © {new Date().getFullYear()} Bonsai. All rights reserved.
           </p>
-          <p style={{ fontSize: '.65rem', color: 'var(--t-tertiary)', margin: 0 }}>
+          <p style={{ fontSize: '.64rem', color: 'var(--t-tertiary)', margin: 0 }}>
             Made with care for professionals who care about quality.
           </p>
         </div>
@@ -592,6 +663,53 @@ function SheetLink({ label, onClick, active }) {
       onMouseLeave={e => !active && (e.currentTarget.style.background = 'transparent')}>
       {label}
     </button>
+  )
+}
+
+/* ── Toast notification ────────────────────────────────────────────── */
+function Toast({ message, type, onDismiss }) {
+  useEffect(() => {
+    const t = setTimeout(onDismiss, 5000)
+    return () => clearTimeout(t)
+  }, [onDismiss])
+
+  return (
+    <div style={{
+      position:     'fixed',
+      bottom:       24,
+      left:         '50%',
+      transform:    'translateX(-50%)',
+      zIndex:       'var(--z-toast)',
+      display:      'flex',
+      alignItems:   'center',
+      gap:          10,
+      padding:      '12px 18px',
+      borderRadius: 'var(--r-md)',
+      background:   type === 'success' ? 'var(--c-bg)'     : 'var(--surface-2)',
+      border:       type === 'success'
+        ? '1px solid var(--c-border)'
+        : '1px solid var(--border-2)',
+      boxShadow:    'var(--shadow-xl)',
+      color:        type === 'success' ? 'var(--c)' : 'var(--t-primary)',
+      fontFamily:   'var(--font-ui)',
+      fontSize:     '.84rem',
+      fontWeight:   500,
+      whiteSpace:   'nowrap',
+      maxWidth:     'calc(100vw - 2rem)',
+      animation:    'fade-up .22s cubic-bezier(.22,1,.36,1) both',
+    }}>
+      {message}
+      <button onClick={onDismiss} style={{
+        background:'none', border:'none', cursor:'pointer',
+        color:'inherit', opacity:.6, padding:2,
+        marginLeft:4, display:'flex', alignItems:'center',
+      }}>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"
+             stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+          <path d="M2 2l8 8M10 2L2 10"/>
+        </svg>
+      </button>
+    </div>
   )
 }
 
