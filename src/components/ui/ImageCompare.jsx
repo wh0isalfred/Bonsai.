@@ -39,7 +39,7 @@ export default function ImageCompare({ before, after }) {
         aspectRatio: ratio,
         borderRadius:'var(--r-lg)',
         overflow:    'hidden',
-        background:  'var(--c-sand)',
+        background:  'var(--surface-2)',
         cursor:      'col-resize',
         userSelect:  'none',
         boxShadow:   'var(--shadow-sm)',
@@ -75,7 +75,7 @@ export default function ImageCompare({ before, after }) {
           height:      34,
           borderRadius:'50%',
           background:  '#fff',
-          border:      '1.5px solid var(--c-clay)',
+          border:      '1.5px solid var(--border)',
           boxShadow:   'var(--shadow-md)',
           display:     'flex',
           alignItems:  'center',
@@ -86,14 +86,14 @@ export default function ImageCompare({ before, after }) {
         <HandleIcon />
       </div>
 
-      {/* Labels */}
-      <Label text="Before" side="left" />
-      <Label text="After"  side="right" />
+      {/* Labels — hide when divider covers them */}
+      <Label text="Before" side="left"  visible={pos > 18} />
+      <Label text="After"  side="right" visible={pos < 82} />
     </div>
   )
 }
 
-function Label({ text, side }) {
+function Label({ text, side, visible }) {
   return (
     <div style={{
       position:    'absolute',
@@ -109,6 +109,8 @@ function Label({ text, side }) {
       background:  'rgba(12,27,17,.55)',
       color:       '#fff',
       pointerEvents:'none',
+      opacity:     visible ? 1 : 0,
+      transition:  'opacity .15s ease',
     }}>
       {text}
     </div>
@@ -116,7 +118,7 @@ function Label({ text, side }) {
 }
 
 const HandleIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="var(--c-stone)"
+  <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="var(--t-tertiary)"
        strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M4 2.5L1 6.5L4 10.5"/>
     <path d="M9 2.5L12 6.5L9 10.5"/>

@@ -11,7 +11,7 @@
  *   intent    'signup' | 'signin' | 'upgrade'
  *   onClose   () => void
  */
-import { useState, useEffect, useCallback, useRef, useId } from 'react'
+import { useState, useEffect, useCallback, useRef, useId, forwardRef } from 'react'
 import { useAuthStore } from '../../store/useAuthStore'
 import BonsaiLogo from '../../components/ui/BonsaiLogo'
 
@@ -30,7 +30,10 @@ function passwordStrength(p) {
 }
 
 /* ── Field component ───────────────────────────────────────────────── */
-function Field({ id, label, type, value, onChange, hint, disabled, autoComplete, required }) {
+const Field = forwardRef(function Field(
+  { id, label, type, value, onChange, hint, disabled, autoComplete, required },
+  ref
+) {
   const [show, setShow] = useState(false)
   const [focused, setFocused] = useState(false)
   const isPass = type === 'password'
@@ -53,6 +56,7 @@ function Field({ id, label, type, value, onChange, hint, disabled, autoComplete,
       </div>
       <div style={{ position: 'relative' }}>
         <input
+          ref={ref}
           id={id}
           type={inputType}
           value={value}
@@ -108,7 +112,7 @@ function Field({ id, label, type, value, onChange, hint, disabled, autoComplete,
       </div>
     </div>
   )
-}
+})
 
 /* ── Strength bar ──────────────────────────────────────────────────── */
 function StrengthBar({ password }) {
@@ -692,7 +696,7 @@ function DoneScreen({ kind, email, onClose }) {
       icon:    <EnvelopeIcon />,
       title:   'Check your email',
       message: `We sent a confirmation link to ${email}. Click it to activate your account.`,
-      note:    "Can't find it? Check your spam folder.",
+      note:    'Can't find it? Check your spam folder.',
       action:  null,
     },
     signin: {
@@ -706,7 +710,7 @@ function DoneScreen({ kind, email, onClose }) {
       icon:    <EnvelopeIcon />,
       title:   'Reset link sent',
       message: `We sent a password reset link to ${email}.`,
-      note:    "The link expires in 1 hour. Check your spam if it doesn't arrive.",
+      note:    'The link expires in 1 hour. Check your spam if it doesn't arrive.',
       action:  null,
     },
   }
