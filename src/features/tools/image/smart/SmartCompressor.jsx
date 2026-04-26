@@ -22,7 +22,7 @@ import { useHistoryStore } from '../../../../store/userHistoryStore'
 import { useAuthStore }    from '../../../../store/useAuthStore'
 import { useDownloads }    from '../../../../hooks/useDownloads'
 import { useAutoDownload } from '../../../../hooks/useAutoDownload'
-import { getPresetById }   from '../../../../config/presets'
+import { getPresetById, PRESETS } from '../../../../config/presets'
 import { formatBytes }     from '../../../../utils/formatBytes'
 
 const FREE_LIMIT = 15   // free users
