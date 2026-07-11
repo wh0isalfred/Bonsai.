@@ -1,6 +1,12 @@
 /**
  * src/features/tools/image/pro/ProQueue.jsx
  * Horizontal scroll of in-progress and done cards at bottom of Pro editor.
+ *
+ * The remove button is hidden until the card is hovered or the button itself
+ * is keyboard-focused. That reveal is driven by CSS (.queue-card:hover
+ * .queue-remove in index.css) rather than JS — the old version set
+ * opacity:0 inline and tried to un-hide it from the button's own
+ * onMouseEnter, which can't fire while the button is invisible.
  */
 import LeafAnimation from './LeafAnimation'
 import { useDownloads } from '../../../../hooks/useDownloads'
@@ -47,7 +53,7 @@ function QueueCard({ session, index, onDownload, onRemove }) {
 
   return (
     <div
-      className="queue-enter"
+      className="queue-enter queue-card"
       style={{
         flexShrink:    0,
         width:         120,
@@ -101,25 +107,20 @@ function QueueCard({ session, index, onDownload, onRemove }) {
           </span>
         )}
 
-        {/* Remove button */}
+        {/* Remove button — revealed by .queue-card:hover in index.css */}
         <button
           onClick={onRemove}
           title="Remove"
+          aria-label={`Remove ${name}`}
+          className="queue-remove"
           style={{
             position:'absolute', bottom:5, right:5,
             width:18, height:18, borderRadius:'50%',
             border:'none', background:'rgba(14,17,16,.55)',
-            color:'rgba(255,255,255,.7)',
+            color:'rgba(255,255,255,.75)',
             cursor:'pointer', display:'flex',
             alignItems:'center', justifyContent:'center',
-            opacity:0, transition:'opacity var(--t-fast)',
-          }}
-          onMouseEnter={e => e.currentTarget.parentElement.parentElement
-            .querySelectorAll('[data-remove]').forEach(el => el.style.opacity=1)}
-          /* simpler approach: */
-          onFocus={e => e.currentTarget.style.opacity = 1}
-          onBlur={e => e.currentTarget.style.opacity = 0}
-          data-remove>
+          }}>
           <svg width="8" height="8" viewBox="0 0 8 8" fill="none"
                stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
             <path d="M1 1l6 6M7 1L1 7"/>

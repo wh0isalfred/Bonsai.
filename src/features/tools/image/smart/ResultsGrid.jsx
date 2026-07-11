@@ -25,24 +25,26 @@ function pct(orig, comp) {
 }
 
 export default function ResultsGrid({ files, onRemove }) {
+  // hooks FIRST, unconditionally
+  const [expandedId, setExpandedId] = useState(null)
+
   const active = files.filter(f =>
     f.status === 'compressing' || f.status === 'done' || f.status === 'error'
   )
-  if (!active.length) return null
-
-  const [expandedId, setExpandedId] = useState(null)
-  const expandedFile = active.find(f => f.id === expandedId && f.status === 'done')
 
   const handleCardClick = useCallback((file) => {
     if (file.status !== 'done') return
     setExpandedId(prev => prev === file.id ? null : file.id)
   }, [])
 
-  // If expanded card gets removed, close the compare panel
   const handleRemove = useCallback((id) => {
-    if (expandedId === id) setExpandedId(null)
+    setExpandedId(prev => prev === id ? null : prev)
     onRemove?.(id)
-  }, [expandedId, onRemove])
+  }, [onRemove])
+
+  if (!active.length) return null
+
+  const expandedFile = active.find(f => f.id === expandedId && f.status === 'done')
 
   const doneCount  = active.filter(f => f.status === 'done').length
   const totalCount = active.length

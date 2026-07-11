@@ -10,20 +10,21 @@
  * UX flow:
  *   1. Drop images (DropZone or compact strip once files staged)
  *   2. Pick preset (PresetPicker)
- *   3. Click "Compress" — workers fire in parallel
- *   4. ResultsGrid shows compressing cards (leaf animation) → done cards (flip/compare)
+ *   3. Click "Compress" — workers fire in parallel via useCompressionWorker
+ *   4. ResultsGrid shows compressing cards (leaf animation) → done cards
  *   5. Download individually or ZIP all
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
 import DropZone     from '../../../../components/ui/DropZone'
 import PresetPicker from './PresetPicker'
 import ResultsGrid  from './ResultsGrid'
-import { useHistoryStore } from '../../../../store/userHistoryStore'
-import { useAuthStore }    from '../../../../store/useAuthStore'
-import { useDownloads }    from '../../../../hooks/useDownloads'
-import { useAutoDownload } from '../../../../hooks/useAutoDownload'
-import { getPresetById, PRESETS } from '../../../../config/presets'
-import { formatBytes }     from '../../../../utils/formatBytes'
+import { useHistoryStore }       from '../../../../store/userHistoryStore'
+import { useAuthStore }          from '../../../../store/useAuthStore'
+import { useDownloads }          from '../../../../hooks/useDownloads'
+import { useAutoDownload }       from '../../../../hooks/useAutoDownload'
+import { useCompressionWorker }  from '../../../../hooks/useCompressionWorker'
+import { getPresetById, PRESETS, withPlanWatermark } from '../../../../config/presets'
+import { formatBytes }           from '../../../../utils/formatBytes'
 
 const FREE_LIMIT = 15   // free users
 const PRO_LIMIT  = null // null = unlimited
@@ -42,17 +43,31 @@ export default function SmartCompressor() {
   const [presetSizes,  setPresetSizes]  = useState({})
   const [estimating,   setEstimating]   = useState(false)
 
-  const workers    = useRef(new Map())
-  const savedRef   = useRef(false)
-  const estWorkers = useRef(new Map())
+  const savedRef = useRef(false)
 
-  const plan = useAuthStore(s => s.plan)
+  /* Mirror of `files` for use inside event handlers. Lets handlers read the
+     current list without taking `files` as a dependency (which would make
+     every callback unstable) and without reading state inside a state
+     updater (which must stay pure — React invokes updaters twice in
+     StrictMode). */
+  const filesRef = useRef(files)
+  useEffect(() => { filesRef.current = files })
+
+  const plan   = useAuthStore(s => s.plan)
   const isPaid = plan === 'pro' || plan === 'supporter'
   /* null = no limit (paid), number = cap (free) */
   const SMART_LIMIT = isPaid ? PRO_LIMIT : FREE_LIMIT
 
   const { addBatch }    = useHistoryStore()
   const { downloadZip } = useDownloads()
+
+  /* ── Patch single file ────────────────────────────────────────────── */
+  const patch = useCallback((id, update) => {
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, ...update } : f))
+  }, [])
+
+  /* ── Worker lifecycle (shared with Pro mode) ──────────────────────── */
+  const { compressMany, cancel, cancelAll } = useCompressionWorker(patch)
 
   /* ── Estimate compressed sizes for all presets ────────────────────
      Runs on ALL idle files in parallel, sums results per preset.
@@ -64,7 +79,6 @@ export default function SmartCompressor() {
     setEstimating(true)
     const MAX = 320
 
-    /* For each file, encode at each preset quality and collect bytes */
     const perFile = await Promise.all(
       idleFileList.map(({ file, size: originalSize }) =>
         new Promise(resolveFile => {
@@ -122,17 +136,6 @@ export default function SmartCompressor() {
     setEstimating(false)
   }, [])
 
-  /* Re-run when the set of idle files changes */
-  useEffect(() => {
-    const idle = files.filter(f => f.status === 'idle')
-    if (idle.length) {
-      estimatePresetSizes(idle)
-    } else {
-      setPresetSizes({})
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files.length])
-
   /* ── Derived ──────────────────────────────────────────────────────── */
   const hasFiles       = files.length > 0
   const idleFiles      = files.filter(f => f.status === 'idle')
@@ -148,6 +151,15 @@ export default function SmartCompressor() {
     ? Math.round((1 - totalCompBytes / totalOrigBytes) * 100)
     : 0
 
+  /* Re-estimate whenever the *set* of idle files changes (not just the
+     count — removing one and adding another must re-run). */
+  const idleKey = idleFiles.map(f => f.id).join(',')
+  useEffect(() => {
+    const idle = filesRef.current.filter(f => f.status === 'idle')
+    if (idle.length) estimatePresetSizes(idle)
+    else             setPresetSizes({})
+  }, [idleKey, estimatePresetSizes])
+
   /* ── Auto-download (fires when each file reaches 'done') ──────────── */
   const autoFiles = files.map(f => ({
     id: f.id, status: f.status, name: f.name,
@@ -155,163 +167,104 @@ export default function SmartCompressor() {
   }))
   useAutoDownload(autoFiles, autoDownload)
 
-  /* ── History save (once, when all settled) ────────────────────────── */
+  /* ── History save (once, when all settled) ────────────────────────────
+     `isPaid` — NOT a hardcoded false. Paid users get the 2-week retention
+     window they're promised on the pricing page; free users get 72h. */
   useEffect(() => {
     if (allSettled && doneFiles.length && !savedRef.current) {
       savedRef.current = true
-      addBatch(files, false /* isPro */)
+      addBatch(filesRef.current, isPaid)
     }
-  }, [allSettled]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allSettled, doneFiles.length, isPaid, addBatch])
 
   useEffect(() => {
     if (!hasFiles) savedRef.current = false
   }, [hasFiles])
 
-  /* ── Cleanup on unmount ───────────────────────────────────────────── */
-  useEffect(() => {
-    return () => {
-      workers.current.forEach(w => w.terminate())
-      /* Note: we intentionally don't revoke URLs here because unmount
-         can happen during route transitions while the user is still on
-         the page. URLs are revoked on handleStartOver or explicit remove. */
-    }
-  }, [])
-
-  /* ── Patch single file ────────────────────────────────────────────── */
-  const patch = useCallback((id, update) => {
-    setFiles(prev => prev.map(f => f.id === id ? { ...f, ...update } : f))
-  }, [])
-
-  /* ── Handle dropped files ─────────────────────────────────────────── */
+  /* ── Handle dropped files ───────────────────────────────────────────
+     All branching happens BEFORE any setState. Nothing is computed inside
+     a state updater, so StrictMode's double-invoke can't create duplicate
+     object URLs or fire setLimitWarn twice. */
   const handleDrop = useCallback((incoming) => {
-    setLimitWarn(false)
-    setFiles(prev => {
-      /* null limit = unlimited (paid users) */
-      const remaining = SMART_LIMIT === null
-        ? incoming.length
-        : SMART_LIMIT - prev.length
+    const current   = filesRef.current
+    const remaining = SMART_LIMIT === null
+      ? incoming.length
+      : SMART_LIMIT - current.length
 
-      if (remaining <= 0) { setLimitWarn(true); return prev }
+    if (remaining <= 0) {
+      setLimitWarn(true)
+      return
+    }
 
-      const existingKeys = new Set(prev.map(f => `${f.name}:${f.size}`))
+    const existingKeys = new Set(current.map(f => `${f.name}:${f.size}`))
 
-      const toAdd = incoming
-        .slice(0, remaining)
-        .filter(f => !existingKeys.has(`${f.name}:${f.size}`))
-        .map(f => ({
-          id:        nextId(),
-          file:      f,
-          name:      f.name,
-          size:      f.size,
-          type:      f.type,
-          beforeUrl: URL.createObjectURL(f),
-          status:    'idle',
-          progress:  0,
-          result:    null,
-          error:     null,
-        }))
+    const toAdd = incoming
+      .slice(0, remaining)
+      .filter(f => !existingKeys.has(`${f.name}:${f.size}`))
+      .map(f => ({
+        id:        nextId(),
+        file:      f,
+        name:      f.name,
+        size:      f.size,
+        type:      f.type,
+        beforeUrl: URL.createObjectURL(f),
+        status:    'idle',
+        progress:  0,
+        result:    null,
+        error:     null,
+      }))
 
-      if (SMART_LIMIT !== null && incoming.length > remaining) setLimitWarn(true)
-      return [...prev, ...toAdd]
-    })
+    setLimitWarn(SMART_LIMIT !== null && incoming.length > remaining)
+    if (toAdd.length) setFiles(prev => [...prev, ...toAdd])
   }, [SMART_LIMIT])
 
   /* ── Remove one file ──────────────────────────────────────────────── */
   const handleRemove = useCallback((id) => {
-    workers.current.get(id)?.terminate()
-    workers.current.delete(id)
-    setFiles(prev => {
-      const f = prev.find(x => x.id === id)
-      if (f?.beforeUrl)    URL.revokeObjectURL(f.beforeUrl)
-      if (f?.result?.url)  URL.revokeObjectURL(f.result.url)
-      return prev.filter(x => x.id !== id)
-    })
-  }, [])
+    cancel(id)
 
-  /* ── Fire compression workers ─────────────────────────────────────── */
+    const target = filesRef.current.find(f => f.id === id)
+    if (target?.beforeUrl)   URL.revokeObjectURL(target.beforeUrl)
+    if (target?.result?.url) URL.revokeObjectURL(target.result.url)
+
+    setFiles(prev => prev.filter(f => f.id !== id))
+  }, [cancel])
+
+  /* ── Fire compression ─────────────────────────────────────────────────
+     The hook flips each file to 'compressing' itself, so there's no
+     separate "mark as compressing" pass to keep in sync. */
   const handleCompress = useCallback(() => {
-    const chosen = getPresetById(preset)
-
-    /* Snapshot of idle files before state mutation */
-    const toCompress = files.filter(f => f.status === 'idle')
+    const chosen     = getPresetById(preset)
+    const toCompress = filesRef.current.filter(f => f.status === 'idle')
     if (!toCompress.length) return
 
-    /* Mark all as compressing */
-    setFiles(prev => prev.map(f =>
-      f.status === 'idle' ? { ...f, status: 'compressing', progress: 0 } : f
-    ))
+    /* Free plan → watermarked. This is decided here, once, right before
+       the settings reach the worker — never baked into the preset itself. */
+    const settings = withPlanWatermark(chosen.settings, isPaid)
 
-    /* Spawn one worker per file — run in parallel */
-    toCompress.forEach(f => {
-      if (workers.current.has(f.id)) return
-
-      const worker = new Worker(
-        new URL('../../../../workers/compression.worker.js', import.meta.url),
-        { type: 'module' }
-      )
-      workers.current.set(f.id, worker)
-
-      worker.onmessage = ({ data }) => {
-        switch (data.type) {
-          case 'progress':
-            patch(f.id, { progress: data.progress })
-            break
-
-          case 'done': {
-            const url = URL.createObjectURL(data.result.blob)
-            patch(f.id, {
-              status:   'done',
-              progress: 100,
-              result:   {
-                ...data.result,
-                url,
-                originalSize: f.size,
-              },
-            })
-            workers.current.delete(f.id)
-            worker.terminate()
-            break
-          }
-
-          case 'error':
-            patch(f.id, { status: 'error', error: data.error, progress: 0 })
-            workers.current.delete(f.id)
-            worker.terminate()
-            break
-        }
-      }
-
-      worker.onerror = e => {
-        patch(f.id, { status: 'error', error: e.message ?? 'Worker crashed', progress: 0 })
-        workers.current.delete(f.id)
-        worker.terminate()
-      }
-
-      worker.postMessage({ id: f.id, file: f.file, settings: chosen.settings })
-    })
-  }, [files, preset, patch])
+    compressMany(
+      toCompress.map(f => ({ id: f.id, file: f.file, size: f.size })),
+      settings
+    )
+  }, [preset, isPaid, compressMany])
 
   /* ── Start over ───────────────────────────────────────────────────── */
   const handleStartOver = useCallback(() => {
-    workers.current.forEach(w => w.terminate())
-    workers.current.clear()
+    cancelAll()
 
-    setFiles(prev => {
-      prev.forEach(f => {
-        if (f.beforeUrl)   URL.revokeObjectURL(f.beforeUrl)
-        if (f.result?.url) URL.revokeObjectURL(f.result.url)
-      })
-      return []
+    filesRef.current.forEach(f => {
+      if (f.beforeUrl)   URL.revokeObjectURL(f.beforeUrl)
+      if (f.result?.url) URL.revokeObjectURL(f.result.url)
     })
 
+    setFiles([])
     setLimitWarn(false)
     savedRef.current = false
-  }, [])
+  }, [cancelAll])
 
   /* ── Download all as ZIP ──────────────────────────────────────────── */
   const handleDownloadZip = useCallback(() => {
-    downloadZip(doneFiles)
-  }, [downloadZip, doneFiles])
+    downloadZip(filesRef.current.filter(f => f.status === 'done'))
+  }, [downloadZip])
 
   /* ════════════════════════════════════════════════════════════════════
      RENDER
@@ -542,15 +495,14 @@ function BottomBar({
           cursor:     'pointer',
           userSelect: 'none',
         }}>
-          <div
-            className="toggle"
-            onClick={() => onAutoDownload(!autoDownload)}
-            style={{ cursor: 'pointer' }}>
+          {/* Label wraps the input — clicking anywhere toggles it exactly once.
+              (The old markup also had an onClick on the wrapper, which fired
+              in addition to the input's own onChange.) */}
+          <div className="toggle">
             <input
               type="checkbox"
               checked={autoDownload}
-              onChange={e => onAutoDownload(e.target.checked)}
-              tabIndex={-1} />
+              onChange={e => onAutoDownload(e.target.checked)} />
             <div className="toggle-track">
               <div className="toggle-thumb" />
             </div>

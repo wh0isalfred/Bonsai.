@@ -27,26 +27,14 @@ function incrementTrial() {
 
 export const useModeStore = create((set, get) => ({
   mode:  loadMode(),   // 'smart' | 'pro'
-  isPro: false,        // flip to true when payment confirmed
-
+  
   setMode: (mode) => {
     saveMode(mode)
     set({ mode })
-  },
-
-  // Whether this user can actually export (download/ZIP)
-  canExport: () => {
-    const { mode, isPro } = get()
-    if (mode === 'smart') return true          // Smart Mode always exports
-    return isPro                               // Pro Mode: paid only
   },
 
   // Use a trial export (Pro Mode, free user, ≤1 trial remaining)
   hasTrialExport: () => getTrialCount() < 1,
   useTrial: () => incrementTrial(),
 
-  // Pro-gated features
-  canUseAdvanced:  () => get().mode === 'pro',
-  canUsePerFile:   () => get().mode === 'pro' && get().isPro,
-  canUseBatchZip:  () => get().isPro || get().mode === 'smart',  // Smart always, Pro needs paid
 }))

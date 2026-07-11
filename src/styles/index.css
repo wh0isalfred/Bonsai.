@@ -687,6 +687,28 @@ input[type="range"]::-moz-range-thumb {
 .h-scroll::-webkit-scrollbar       { height: 4px; }
 .h-scroll::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 99px; }
 
+/* ── Queue card: reveal remove button on hover/focus ─────────
+   Kept in CSS rather than JS — a button at opacity:0 can't reliably
+   receive its own mouse events, so the old JS reveal never fired. */
+.queue-remove {
+  opacity:    0;
+  transition: opacity var(--t-fast), background var(--t-fast);
+}
+.queue-card:hover .queue-remove,
+.queue-card:focus-within .queue-remove,
+.queue-remove:focus-visible {
+  opacity: 1;
+}
+.queue-remove:hover {
+  background: rgba(255, 107, 107, .85) !important;
+  color:      #fff;
+}
+
+/* Touch devices have no hover — keep the control permanently visible */
+@media (hover: none) {
+  .queue-remove { opacity: .85; }
+}
+
 /* ── Chip / filter pill ─────────────────────────────────────── */
 .chip {
   display:       inline-flex;

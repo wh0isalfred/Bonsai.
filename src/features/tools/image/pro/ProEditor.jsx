@@ -16,13 +16,14 @@ import DropZone       from '../../../../components/ui/DropZone'
 import ImageCompare   from '../../../../components/ui/ImageCompare'
 import EditorControls from './EditorControls'
 import ProQueue       from './ProQueue'
-import { useDownloads }    from '../../../../hooks/useDownloads'
-import { useAutoDownload } from '../../../../hooks/useAutoDownload'
-import { useHistoryStore } from '../../../../store/userHistoryStore'
-import { useAuthStore }    from '../../../../store/useAuthStore'
-import { useModeStore }    from '../../../../store/useModeStore'
-import { DEFAULT_PRO_SETTINGS } from '../../../../config/presets'
-import { formatBytes } from '../../../../utils/formatBytes'
+import { useDownloads }         from '../../../../hooks/useDownloads'
+import { useAutoDownload }      from '../../../../hooks/useAutoDownload'
+import { useCompressionWorker } from '../../../../hooks/useCompressionWorker'
+import { useHistoryStore }      from '../../../../store/userHistoryStore'
+import { useAuthStore }         from '../../../../store/useAuthStore'
+import { useModeStore }         from '../../../../store/useModeStore'
+import { DEFAULT_PRO_SETTINGS, withPlanWatermark } from '../../../../config/presets'
+import { formatBytes }          from '../../../../utils/formatBytes'
 
 let _seq = 0
 const nextId = () => `pro_${Date.now()}_${++_seq}`
@@ -93,9 +94,7 @@ async function renderPreview(file, settings) {
       canvas.toBlob(blob => {
         if (!blob) { reject(new Error('Preview blob is null')); return }
 
-        /* Cap upward only — estimate can never exceed original size.
-           We don't use 0.98 because that clamps small-file estimates
-           to a near-identical number regardless of quality setting. */
+        /* Cap upward only — estimate can never exceed original size. */
         const raw = scale < 1
           ? Math.round(blob.size / (scale * scale))
           : blob.size
@@ -152,6 +151,9 @@ function applyUnsharpMask(ctx, w, h, amount) {
   ctx.putImageData(out, 0, 0)
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   COMPONENT
+   ══════════════════════════════════════════════════════════════════════ */
 export default function ProEditor({ onAuth }) {
   /* sessions: { id, file, name, size, beforeUrl,
                  settings, status, progress, result, error,
@@ -160,22 +162,40 @@ export default function ProEditor({ onAuth }) {
   const [activeId,     setActiveId]     = useState(null)
   const [autoDownload, setAutoDownload] = useState(false)
 
-  const workers       = useRef(new Map())
-  const savedRef      = useRef(false)
-  const previewTimer  = useRef(null)
-  const prevUrlsRef   = useRef(new Map())  // id → last previewUrl to revoke
+  const savedRef    = useRef(false)
+  const prevUrlsRef = useRef(new Map())  // id → last previewUrl to revoke
 
-  const { downloadZip }  = useDownloads()
-  const { addBatch }     = useHistoryStore()
+  const { downloadZip } = useDownloads()
+  const { addBatch }    = useHistoryStore()
+
+  const plan   = useAuthStore(s => s.plan)
+  const isPaid = plan === 'pro' || plan === 'supporter'
 
   /* ── Derived ──────────────────────────────────────────────────── */
-  const active    = sessions.find(s => s.id === activeId)
+  const active    = sessions.find(s => s.id === activeId) ?? null
   const queue     = sessions.filter(s => s.id !== activeId)
   const doneFiles = sessions.filter(s => s.status === 'done')
   const allDone   = sessions.length > 0 && sessions.every(s =>
     s.status === 'done' || s.status === 'error'
   )
   const anyCompressing = sessions.some(s => s.status === 'compressing')
+  const hasFiles       = sessions.length > 0
+
+  /* Mirrors for use inside event handlers — lets handlers read current
+     state without depending on it and without reading state inside a
+     state updater (updaters must stay pure; StrictMode double-invokes). */
+  const sessionsRef = useRef(sessions)
+  const activeRef   = useRef(active)
+  useEffect(() => { sessionsRef.current = sessions })
+  useEffect(() => { activeRef.current   = active   })
+
+  /* ── Patch a session ──────────────────────────────────────────── */
+  const patch = useCallback((id, update) => {
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, ...update } : s))
+  }, [])
+
+  /* ── Worker lifecycle (shared with Smart mode) ────────────────── */
+  const { compress, cancel, cancelAll } = useCompressionWorker(patch)
 
   /* ── Auto-download ────────────────────────────────────────────── */
   const autoFiles = sessions.map(s => ({
@@ -184,35 +204,37 @@ export default function ProEditor({ onAuth }) {
   }))
   useAutoDownload(autoFiles, autoDownload)
 
-  /* ── History save ─────────────────────────────────────────────── */
+  /* ── History save ───────────────────────────────────────────────
+     isPaid — not a hardcoded `true`. A free user demoing Pro mode gets the
+     72h window; paid users get 2 weeks, matching the pricing page. */
   useEffect(() => {
     if (allDone && doneFiles.length && !savedRef.current) {
       savedRef.current = true
-      addBatch(sessions, true /* isPro */)
+      addBatch(sessionsRef.current, isPaid)
     }
-  }, [allDone]) // eslint-disable-line
+  }, [allDone, doneFiles.length, isPaid, addBatch])
 
-  /* ── Cleanup on unmount ───────────────────────────────────────── */
-  useEffect(() => () => {
-    workers.current.forEach(w => w.terminate())
-    clearTimeout(previewTimer.current)
-  }, [])
+  useEffect(() => {
+    if (!hasFiles) savedRef.current = false
+  }, [hasFiles])
 
-  /* ── Patch a session ──────────────────────────────────────────── */
-  const patch = useCallback((id, update) => {
-    setSessions(prev => prev.map(s => s.id === id ? { ...s, ...update } : s))
+  /* ── Revoke any outstanding preview URLs on unmount ───────────────
+     (Worker termination is handled inside useCompressionWorker.) */
+  useEffect(() => {
+    const urls = prevUrlsRef.current
+    return () => {
+      urls.forEach(url => URL.revokeObjectURL(url))
+      urls.clear()
+    }
   }, [])
 
   /*
    * ── Generate live preview (debounced 320ms) ───────────────────────
    *
-   * Critical: the debounce function MUST be stable across renders.
-   * Wrapping debounce() inside useCallback recreates it on every render
-   * which resets the timer and means the preview never fires while
-   * the user is dragging a slider.
-   *
-   * Fix: store debounce in a ref so it's created once for the lifetime
-   * of the component. We access the latest `patch` via a ref too.
+   * The debounced function MUST be stable across renders. Recreating it
+   * every render resets the timer, so the preview would never fire while
+   * the user is dragging a slider. It's created once via useRef, and
+   * reads the latest `patch` through patchRef.
    */
   const patchRef = useRef(patch)
   useEffect(() => { patchRef.current = patch }, [patch])
@@ -232,22 +254,15 @@ export default function ProEditor({ onAuth }) {
     }, 320)
   ).current
 
-  /* Convenience wrapper that passes prevUrlsRef automatically */
   const triggerPreview = useCallback((id, file, settings) => {
     generatePreview(id, file, settings, prevUrlsRef.current)
   }, [generatePreview])
 
-  /*
-   * Keep a ref to the active session so handleSettingsChange can read
-   * the current file + settings synchronously without stale closure.
-   * This avoids needing `sessions` as a dependency (which would cause
-   * handleSettingsChange to recreate on every keystroke/slider move).
-   */
-  const activeRef = useRef(null)
-  useEffect(() => { activeRef.current = active ?? null }, [active])
-
-  /* ── Drop files ───────────────────────────────────────────────── */
+  /* ── Drop files ───────────────────────────────────────────────────
+     setActiveId is called AFTER setSessions, not inside its updater. */
   const handleDrop = useCallback((incoming) => {
+    if (!incoming.length) return
+
     const newSessions = incoming.map(f => ({
       id:             nextId(),
       file:           f,
@@ -265,148 +280,108 @@ export default function ProEditor({ onAuth }) {
       estimatedSize:  null,
     }))
 
-    setSessions(prev => {
-      const next = [...prev, ...newSessions]
-      setActiveId(a => a ?? newSessions[0]?.id)
-      return next
-    })
+    setSessions(prev => [...prev, ...newSessions])
+    setActiveId(cur => cur ?? newSessions[0].id)
   }, [])
 
   /* ── Settings change → re-generate preview ────────────────────── */
   const handleSettingsChange = useCallback((patch_) => {
-    if (!activeId || !activeRef.current) return
+    const current = activeRef.current
+    if (!current) return
 
-    /*
-     * Merge the patch with current settings BEFORE the state update
-     * so we can pass the correct new settings to triggerPreview.
-     * Calling triggerPreview inside setSessions is not allowed —
-     * state updater functions must be pure (no side effects).
-     */
-    const newSettings = { ...activeRef.current.settings, ...patch_ }
+    /* Merge before the state update so we can hand the *new* settings to
+       triggerPreview. Calling triggerPreview inside the updater would be a
+       side effect in a function React requires to be pure. */
+    const newSettings = { ...current.settings, ...patch_ }
 
-    /* 1. Update state */
     setSessions(prev => prev.map(s =>
-      s.id === activeId
-        ? { ...s, settings: newSettings }
-        : s
+      s.id === current.id ? { ...s, settings: newSettings } : s
     ))
 
-    /* 2. Trigger preview with the new settings — outside the updater */
-    triggerPreview(activeId, activeRef.current.file, newSettings)
+    triggerPreview(current.id, current.file, newSettings)
+  }, [triggerPreview])
+
+  /* Generate the initial preview whenever a different session opens */
+  useEffect(() => {
+    const s = sessionsRef.current.find(x => x.id === activeId)
+    if (!s) return
+    triggerPreview(s.id, s.file, s.settings)
   }, [activeId, triggerPreview])
 
-  /* Generate initial preview when activeId changes */
-  useEffect(() => {
-    if (!active) return
-    triggerPreview(active.id, active.file, active.settings)
-  }, [activeId]) // eslint-disable-line
-
-  /* ── Compress & move to next ──────────────────────────────────── */
+  /* ── Compress & move to next ──────────────────────────────────────
+     The hook flips status → 'compressing' and owns the worker. All we do
+     here is fire it and advance the editor to the next unedited image. */
   const handleCompress = useCallback(() => {
-    if (!active || active.status !== 'editing') return
+    const current = activeRef.current
+    if (!current || current.status !== 'editing') return
 
-    patch(active.id, { status: 'compressing', progress: 0 })
+    /* Free plan → watermarked, same rule as Smart mode. isPaid is read from
+       useAuthStore above, not from anything client-resettable. */
+    const settings = withPlanWatermark(current.settings, isPaid)
 
-    const worker = new Worker(
-      new URL('../../../../workers/compression.worker.js', import.meta.url),
-      { type: 'module' }
+    compress(
+      { id: current.id, file: current.file, size: current.size },
+      settings
     )
-    workers.current.set(active.id, worker)
 
-    worker.onmessage = ({ data }) => {
-      switch (data.type) {
-        case 'progress':
-          patch(active.id, { progress: data.progress })
-          break
-        case 'done': {
-          const url = URL.createObjectURL(data.result.blob)
-          patch(active.id, {
-            status: 'done', progress: 100,
-            result: { ...data.result, url, originalSize: active.size },
-          })
-          workers.current.delete(active.id)
-          worker.terminate()
-          break
-        }
-        case 'error':
-          patch(active.id, { status: 'error', error: data.error })
-          workers.current.delete(active.id)
-          worker.terminate()
-          break
-      }
-    }
-    worker.onerror = e => {
-      patch(active.id, { status: 'error', error: e.message ?? 'Worker crashed' })
-      workers.current.delete(active.id)
-      worker.terminate()
-    }
+    const next = sessionsRef.current.find(s =>
+      s.id !== current.id && s.status === 'editing'
+    )
+    setActiveId(next?.id ?? null)
+  }, [compress, isPaid])
 
-    worker.postMessage({
-      id:       active.id,
-      file:     active.file,
-      settings: active.settings,
-    })
-
-    /* Advance to next unedited session */
-    setSessions(prev => {
-      const next = prev.find(s => s.id !== active.id && s.status === 'editing')
-      setActiveId(next?.id ?? null)
-      return prev
-    })
-  }, [active, patch])
-
-  /* ── Remove from queue ────────────────────────────────────────── */
+  /* ── Remove from queue ────────────────────────────────────────────
+     Everything is computed from sessionsRef *before* any setState, so the
+     next-active choice sees the post-removal list and nothing runs twice. */
   const handleRemove = useCallback((id) => {
-    workers.current.get(id)?.terminate()
-    workers.current.delete(id)
-    const prev = prevUrlsRef.current.get(id)
-    if (prev) URL.revokeObjectURL(prev)
+    cancel(id)
+
+    const current = sessionsRef.current
+    const target  = current.find(s => s.id === id)
+
+    if (target?.beforeUrl)   URL.revokeObjectURL(target.beforeUrl)
+    if (target?.result?.url) URL.revokeObjectURL(target.result.url)
+
+    const preview = prevUrlsRef.current.get(id)
+    if (preview) URL.revokeObjectURL(preview)
     prevUrlsRef.current.delete(id)
 
-    setSessions(prev => {
-      const s = prev.find(x => x.id === id)
-      if (s?.beforeUrl)   URL.revokeObjectURL(s.beforeUrl)
-      if (s?.result?.url) URL.revokeObjectURL(s.result.url)
-      return prev.filter(x => x.id !== id)
-    })
+    const remaining = current.filter(s => s.id !== id)
+    setSessions(remaining)
 
-    /* If we removed the active session, advance to the next editing one */
-    setActiveId(current => {
-      if (current !== id) return current  // wasn't active — no change
-
-      /* Find next session to open from the current list before removal */
-      const remaining = sessions.filter(s => s.id !== id)
+    setActiveId(cur => {
+      if (cur !== id) return cur   // removed a queued card — active unchanged
       const next = remaining.find(s => s.status === 'editing')
         ?? remaining.find(s => s.status === 'done')
         ?? remaining[0]
-        ?? null
       return next?.id ?? null
     })
-  }, [sessions])
+  }, [cancel])
 
   /* ── Start over ───────────────────────────────────────────────── */
   const handleStartOver = useCallback(() => {
-    workers.current.forEach(w => w.terminate())
-    workers.current.clear()
-    setSessions(prev => {
-      prev.forEach(s => {
-        if (s.beforeUrl)   URL.revokeObjectURL(s.beforeUrl)
-        if (s.result?.url) URL.revokeObjectURL(s.result.url)
-        const pv = prevUrlsRef.current.get(s.id)
-        if (pv) URL.revokeObjectURL(pv)
-      })
-      return []
+    cancelAll()
+
+    sessionsRef.current.forEach(s => {
+      if (s.beforeUrl)   URL.revokeObjectURL(s.beforeUrl)
+      if (s.result?.url) URL.revokeObjectURL(s.result.url)
     })
+    prevUrlsRef.current.forEach(url => URL.revokeObjectURL(url))
     prevUrlsRef.current.clear()
+
+    setSessions([])
     setActiveId(null)
     savedRef.current = false
-  }, [])
+  }, [cancelAll])
+
+  /* ── Download all done as ZIP ─────────────────────────────────── */
+  const handleZip = useCallback(() => {
+    downloadZip(sessionsRef.current.filter(s => s.status === 'done'))
+  }, [downloadZip])
 
   /* ════════════════════════════════════════════════════════════════
      RENDER
      ════════════════════════════════════════════════════════════════ */
-  const hasFiles = sessions.length > 0
-
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
 
@@ -438,9 +413,7 @@ export default function ProEditor({ onAuth }) {
           doneCount={doneFiles.length}
           autoDownload={autoDownload}
           onAutoDownload={setAutoDownload}
-          onZip={() => downloadZip(doneFiles.map(s => ({
-            ...s, result: s.result,
-          })))}
+          onZip={handleZip}
           onStartOver={handleStartOver}
           onAuth={onAuth} />
       )}
@@ -673,13 +646,14 @@ function DoneBar({ doneCount, autoDownload, onAutoDownload, onZip, onStartOver, 
   const plan    = useAuthStore(s => s.plan)
   const isPaid  = plan === 'pro' || plan === 'supporter'
 
-  const { hasTrialExport, useTrial } = useModeStore()
-  const hasTrial = hasTrialExport()
+  const hasTrialExport = useModeStore(s => s.hasTrialExport)
+  const useTrial       = useModeStore(s => s.useTrial)
+  const hasTrial       = hasTrialExport()
 
   /* Gate the zip download: paid users go straight through,
      free users with a trial get one download, others see auth modal */
   const handleZip = () => {
-    if (isPaid) { onZip(); return }
+    if (isPaid)   { onZip(); return }
     if (hasTrial) { useTrial(); onZip(); return }
     onAuth?.('upgrade')
   }
@@ -718,11 +692,11 @@ function DoneBar({ doneCount, autoDownload, onAutoDownload, onZip, onStartOver, 
         {isPaid && (
           <label style={{ display:'flex', alignItems:'center', gap:6,
                           fontSize:'.72rem', color:'var(--t-secondary)', cursor:'pointer' }}>
-            <label className="toggle">
+            <div className="toggle">
               <input type="checkbox" checked={autoDownload}
                 onChange={e => onAutoDownload(e.target.checked)} />
               <div className="toggle-track"><div className="toggle-thumb"/></div>
-            </label>
+            </div>
             Auto-download
           </label>
         )}

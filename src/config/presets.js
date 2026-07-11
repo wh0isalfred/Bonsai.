@@ -124,6 +124,25 @@ export const getPresetById = (id) => PRESETS.find(p => p.id === id) ?? PRESETS[1
 
 /**
  * Alias — keeps imports consistent across the codebase.
- * compressionStore.js and ProEditor.jsx both import DEFAULT_ADVANCED.
+ * ProEditor.jsx imports DEFAULT_ADVANCED.
  */
 export const DEFAULT_ADVANCED = DEFAULT_PRO_SETTINGS
+
+/**
+ * withPlanWatermark — the ONLY place `watermark` gets set on a settings
+ * object before it reaches compression.worker.js.
+ *
+ * Presets and DEFAULT_PRO_SETTINGS intentionally never carry a `watermark`
+ * key themselves — whether a mark gets burned in depends on who's
+ * compressing (their plan), not which preset or slider values they chose.
+ * Call this exactly once, right before the settings object is handed to
+ * the worker, in both SmartCompressor and ProEditor.
+ *
+ * Free plan → watermarked (the only enforceable free/paid boundary in a
+ * 100% client-side product — a batch-size cap or "unlimited" claim is just
+ * React state and resets the moment someone reloads; a mark burned into
+ * the output pixels doesn't).
+ */
+export function withPlanWatermark(settings, isPaid) {
+  return { ...settings, watermark: !isPaid }
+}

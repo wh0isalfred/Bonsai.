@@ -98,7 +98,7 @@ export default function PricingPage({ onBack, onAuth }) {
       {/* Trust signals */}
       <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap',
                     gap: '1.5rem', marginTop: '2.5rem' }}>
-        {['Runs 100% in your browser', 'No credit card to start free', '15 images free · unlimited with Pro', 'Cancel anytime'].map(t => (
+        {['Runs 100% in your browser', 'No credit card to start free', '15 images free · unlimited from $0.05/mo', 'Cancel anytime'].map(t => (
           <span key={t} style={{ display: 'flex', alignItems: 'center', gap: 5,
                                  fontSize: '.73rem', color: 'var(--t-tertiary)' }}>
             <span style={{ color: 'var(--c)', fontSize: '.7rem' }}>✓</span> {t}
@@ -322,7 +322,12 @@ const ArrowLeft = () => (
   </svg>
 )
 
-/* ── Plan data ────────────────────────────────────────────────────────────── */
+/* ── Plan data ────────────────────────────────────────────────────────────────
+   Ladder is deliberately a strict superset going up: everything in a lower
+   tier is still true in the one above it. Free is watermarked — that's the
+   one boundary that's actually enforceable in a 100% client-side product,
+   since batch caps and account state can't be. Supporter removes it;
+   Pro adds the manual editor on top of everything Supporter has. */
 const PLANS = [
   {
     tier: 'free', name: 'Free', price: '$0', period: 'forever',
@@ -338,16 +343,29 @@ const PLANS = [
       'ZIP + individual download',
       '72-hour compression history',
       '100% browser-based — nothing uploaded',
+      'Exports include a subtle Bonsai watermark',
     ],
   },
   {
-    tier: 'pro', name: 'Pro', price: '$3', period: '/month',
-    badge: 'Most popular', highlight: true, ctaPrimary: true,
-    desc: 'Full manual control, live preview, and no limits — for professionals.',
-    cta: 'Upgrade to Pro',
+    tier: 'supporter', name: 'Supporter', price: '$0.05', period: '/month',
+    badge: null, highlight: false, ctaPrimary: false,
+    desc: 'Remove the watermark and the batch cap. Nothing else changes.',
+    cta: 'Remove watermark',
     features: [
       'Everything in Free',
+      'No watermark on exports',
       'Unlimited images in Smart Mode',
+      'No cap on batch size',
+      'Early access to new tools',
+    ],
+  },
+  {
+    tier: 'pro', name: 'Pro', price: '$1', period: '/month',
+    badge: 'Most popular', highlight: true, ctaPrimary: true,
+    desc: 'Everything in Supporter, plus full manual control for professional work.',
+    cta: 'Upgrade to Pro',
+    features: [
+      'Everything in Supporter',
       'Pro Mode — per-image editor',
       'Unlimited images in Pro Mode',
       'Live before/after preview',
@@ -357,19 +375,6 @@ const PLANS = [
       'Auto-download on completion',
       'Permanent compression history',
       'Re-download any past batch',
-    ],
-  },
-  {
-    tier: 'supporter', name: 'Supporter', price: '$1', period: '/month',
-    badge: null, highlight: false, ctaPrimary: false,
-    desc: 'Support independent development and unlock key quality-of-life upgrades.',
-    cta: 'Support Bonsai',
-    features: [
-      'Unlimited images in Smart Mode',
-      'Early access to new tools',
-      'No limits on batch size',
-      'Priority processing',
-      'Support independent development',
     ],
   },
 ]
