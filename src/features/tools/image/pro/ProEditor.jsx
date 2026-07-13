@@ -21,8 +21,10 @@ import { useAutoDownload }      from '../../../../hooks/useAutoDownload'
 import { useCompressionWorker } from '../../../../hooks/useCompressionWorker'
 import { useHistoryStore }      from '../../../../store/userHistoryStore'
 import { useAuthStore }         from '../../../../store/useAuthStore'
-import { useModeStore }         from '../../../../store/useModeStore'
-import { DEFAULT_PRO_SETTINGS, withPlanWatermark } from '../../../../config/presets'
+import { useExportGate }        from '../../../../hooks/useExportGate'
+import ModeDiscovery        from '../../../../components/ui/ModeDiscovery'
+import { DEFAULT_PRO_SETTINGS } from '../../../../config/presets'
+import { maybeDrawWatermark } from '../../../../lib/watermark'
 import { formatBytes }          from '../../../../utils/formatBytes'
 
 let _seq = 0
@@ -78,6 +80,12 @@ async function renderPreview(file, settings) {
       /* Sharpen — 5-tap unsharp mask */
       const sharpen = settings.sharpenAmount ?? 0
       if (sharpen > 0) applyUnsharpMask(ctx, w, h, sharpen)
+
+      /* Watermark — drawn LAST, exactly as the worker does it, so the
+         preview is an honest picture of the file they'll actually get.
+         Free users tuning sliders against a clean preview and then
+         downloading a marked file is a bait-and-switch. */
+      maybeDrawWatermark(ctx, w, h, settings)
 
       /* Format */
       const fmt  = settings.outputFormat ?? 'webp'
@@ -171,6 +179,9 @@ export default function ProEditor({ onAuth }) {
   const plan   = useAuthStore(s => s.plan)
   const isPaid = plan === 'pro' || plan === 'supporter'
 
+  /* Single source of truth for "may this user export, and is it marked". */
+  const { guard, canExport, isTrialUse, watermark } = useExportGate(onAuth)
+
   /* ── Derived ──────────────────────────────────────────────────── */
   const active    = sessions.find(s => s.id === activeId) ?? null
   const queue     = sessions.filter(s => s.id !== activeId)
@@ -197,12 +208,15 @@ export default function ProEditor({ onAuth }) {
   /* ── Worker lifecycle (shared with Smart mode) ────────────────── */
   const { compress, cancel, cancelAll } = useCompressionWorker(patch)
 
-  /* ── Auto-download ────────────────────────────────────────────── */
+  /* ── Auto-download ──────────────────────────────────────────────
+     `canExport` in the enabled flag: auto-download was a second silent
+     bypass — it fires downloadOne on every file reaching 'done', with no
+     button and therefore no gate anywhere near it. */
   const autoFiles = sessions.map(s => ({
     id: s.id, status: s.status, name: s.name,
     outputName: null, size: s.size, result: s.result,
   }))
-  useAutoDownload(autoFiles, autoDownload)
+  useAutoDownload(autoFiles, autoDownload && canExport)
 
   /* ── History save ───────────────────────────────────────────────
      isPaid — not a hardcoded `true`. A free user demoing Pro mode gets the
@@ -255,8 +269,12 @@ export default function ProEditor({ onAuth }) {
   ).current
 
   const triggerPreview = useCallback((id, file, settings) => {
-    generatePreview(id, file, settings, prevUrlsRef.current)
-  }, [generatePreview])
+    /* Preview reflects the SAME policy decision as the export, so what they
+       see while tuning is exactly what lands on disk. In Pro mode under the
+       current policy `watermark` is false for everyone — the export block is
+       the gate here, not the mark. */
+    generatePreview(id, file, { ...settings, watermark }, prevUrlsRef.current)
+  }, [generatePreview, watermark])
 
   /* ── Drop files ───────────────────────────────────────────────────
      setActiveId is called AFTER setSessions, not inside its updater. */
@@ -315,20 +333,18 @@ export default function ProEditor({ onAuth }) {
     const current = activeRef.current
     if (!current || current.status !== 'editing') return
 
-    /* Free plan → watermarked, same rule as Smart mode. isPaid is read from
-       useAuthStore above, not from anything client-resettable. */
-    const settings = withPlanWatermark(current.settings, isPaid)
-
+    /* Watermark comes from exportPolicy, not from a local isPaid check —
+       one rule, one place. */
     compress(
       { id: current.id, file: current.file, size: current.size },
-      settings
+      { ...current.settings, watermark }
     )
 
     const next = sessionsRef.current.find(s =>
       s.id !== current.id && s.status === 'editing'
     )
     setActiveId(next?.id ?? null)
-  }, [compress, isPaid])
+  }, [compress, watermark])
 
   /* ── Remove from queue ────────────────────────────────────────────
      Everything is computed from sessionsRef *before* any setState, so the
@@ -391,6 +407,9 @@ export default function ProEditor({ onAuth }) {
         hasFiles={hasFiles}
         compressing={anyCompressing} />
 
+      {/* Empty state — same discovery card as Smart mode */}
+      {!hasFiles && <ModeDiscovery />}
+
       {/* Active editor */}
       {active && (
         <EditorPanel
@@ -404,7 +423,7 @@ export default function ProEditor({ onAuth }) {
 
       {/* Queue */}
       {queue.length > 0 && (
-        <ProQueue sessions={queue} onRemove={handleRemove} />
+        <ProQueue sessions={queue} onRemove={handleRemove} onAuth={onAuth} />
       )}
 
       {/* All done bottom bar */}
@@ -413,9 +432,11 @@ export default function ProEditor({ onAuth }) {
           doneCount={doneFiles.length}
           autoDownload={autoDownload}
           onAutoDownload={setAutoDownload}
-          onZip={handleZip}
+          onZip={guard(handleZip)}
           onStartOver={handleStartOver}
-          onAuth={onAuth} />
+          canExport={canExport}
+          isTrialUse={isTrialUse}
+          isPaid={isPaid} />
       )}
     </div>
   )
@@ -641,23 +662,15 @@ function EditorPanel({ session, onSettingsChange, onCompress, onRemove, hasNext 
   )
 }
 
-/* ── Done bar ───────────────────────────────────────────────────────── */
-function DoneBar({ doneCount, autoDownload, onAutoDownload, onZip, onStartOver, onAuth }) {
-  const plan    = useAuthStore(s => s.plan)
-  const isPaid  = plan === 'pro' || plan === 'supporter'
-
-  const hasTrialExport = useModeStore(s => s.hasTrialExport)
-  const useTrial       = useModeStore(s => s.useTrial)
-  const hasTrial       = hasTrialExport()
-
-  /* Gate the zip download: paid users go straight through,
-     free users with a trial get one download, others see auth modal */
-  const handleZip = () => {
-    if (isPaid)   { onZip(); return }
-    if (hasTrial) { useTrial(); onZip(); return }
-    onAuth?.('upgrade')
-  }
-
+/* ── Done bar ───────────────────────────────────────────────────────────
+   Presentational only. It no longer decides anything about who may export —
+   it renders what useExportGate already decided. The old version made that
+   call itself inside its own onClick, which is exactly why the ProQueue
+   download button and auto-download were able to walk around it. */
+function DoneBar({
+  doneCount, autoDownload, onAutoDownload,
+  onZip, onStartOver, canExport, isTrialUse, isPaid,
+}) {
   return (
     <div
       className="card-enter"
@@ -676,12 +689,12 @@ function DoneBar({ doneCount, autoDownload, onAutoDownload, onZip, onStartOver, 
         <p style={{ fontSize:'.84rem', fontWeight:700, color:'var(--c)', margin:0 }}>
           {doneCount} image{doneCount !== 1 ? 's' : ''} compressed
         </p>
-        {!isPaid && hasTrial && (
+        {!isPaid && isTrialUse && (
           <p style={{ fontSize:'.66rem', color:'var(--t-tertiary)', margin:'2px 0 0' }}>
             1 free Pro export remaining
           </p>
         )}
-        {!isPaid && !hasTrial && (
+        {!canExport && (
           <p style={{ fontSize:'.66rem', color:'var(--warning)', margin:'2px 0 0' }}>
             Upgrade to Pro to download
           </p>
@@ -706,15 +719,15 @@ function DoneBar({ doneCount, autoDownload, onAutoDownload, onZip, onStartOver, 
         </button>
 
         <button
-          onClick={handleZip}
+          onClick={onZip}
           className="btn btn-primary btn-sm"
-          style={!isPaid && !hasTrial ? {
+          style={!canExport ? {
             background: 'var(--surface-2)',
             color:      'var(--c)',
             border:     '1px solid var(--c-border)',
           } : {}}>
           <DownloadIcon />
-          {!isPaid && !hasTrial ? 'Upgrade to download' : 'Download ZIP'}
+          {!canExport ? 'Upgrade to download' : 'Download ZIP'}
         </button>
       </div>
     </div>

@@ -15,15 +15,18 @@
  *   5. Download individually or ZIP all
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
-import DropZone     from '../../../../components/ui/DropZone'
-import PresetPicker from './PresetPicker'
-import ResultsGrid  from './ResultsGrid'
+import DropZone      from '../../../../components/ui/DropZone'
+import PresetPicker  from './PresetPicker'
+import ResultsGrid   from './ResultsGrid'
+import UpgradeHint   from '../../../../components/ui/UpgradeHint'
+import ModeDiscovery from '../../../../components/ui/ModeDiscovery'
 import { useHistoryStore }       from '../../../../store/userHistoryStore'
 import { useAuthStore }          from '../../../../store/useAuthStore'
 import { useDownloads }          from '../../../../hooks/useDownloads'
 import { useAutoDownload }       from '../../../../hooks/useAutoDownload'
 import { useCompressionWorker }  from '../../../../hooks/useCompressionWorker'
-import { getPresetById, PRESETS, withPlanWatermark } from '../../../../config/presets'
+import { useExportGate } from '../../../../hooks/useExportGate'
+import { getPresetById, PRESETS } from '../../../../config/presets'
 import { formatBytes }           from '../../../../utils/formatBytes'
 
 const FREE_LIMIT = 15   // free users
@@ -35,7 +38,7 @@ const nextId = () => `sc_${Date.now()}_${++_seq}`
 /* ══════════════════════════════════════════════════════════════════════
    COMPONENT
    ══════════════════════════════════════════════════════════════════════ */
-export default function SmartCompressor() {
+export default function SmartCompressor({ onAuth }) {
   const [files,        setFiles]        = useState([])
   const [preset,       setPreset]       = useState('high')
   const [autoDownload, setAutoDownload] = useState(false)
@@ -60,6 +63,11 @@ export default function SmartCompressor() {
 
   const { addBatch }    = useHistoryStore()
   const { downloadZip } = useDownloads()
+
+  /* Smart mode is never blocked — but the watermark decision still comes
+     from the same policy function, so there is exactly one place that
+     answers "does this output get marked". */
+  const { guard, watermark } = useExportGate(onAuth)
 
   /* ── Patch single file ────────────────────────────────────────────── */
   const patch = useCallback((id, update) => {
@@ -237,15 +245,11 @@ export default function SmartCompressor() {
     const toCompress = filesRef.current.filter(f => f.status === 'idle')
     if (!toCompress.length) return
 
-    /* Free plan → watermarked. This is decided here, once, right before
-       the settings reach the worker — never baked into the preset itself. */
-    const settings = withPlanWatermark(chosen.settings, isPaid)
-
     compressMany(
       toCompress.map(f => ({ id: f.id, file: f.file, size: f.size })),
-      settings
+      { ...chosen.settings, watermark }
     )
-  }, [preset, isPaid, compressMany])
+  }, [preset, watermark, compressMany])
 
   /* ── Start over ───────────────────────────────────────────────────── */
   const handleStartOver = useCallback(() => {
@@ -262,9 +266,9 @@ export default function SmartCompressor() {
   }, [cancelAll])
 
   /* ── Download all as ZIP ──────────────────────────────────────────── */
-  const handleDownloadZip = useCallback(() => {
+  const handleDownloadZip = useCallback(guard(() => {
     downloadZip(filesRef.current.filter(f => f.status === 'done'))
-  }, [downloadZip])
+  }), [downloadZip, guard])
 
   /* ════════════════════════════════════════════════════════════════════
      RENDER
@@ -300,6 +304,11 @@ export default function SmartCompressor() {
         </div>
       )}
 
+      {/* ── Empty state: what Smart vs Pro actually are ──────────────
+          Occupies dead space and nothing else — gone the moment a file
+          lands. Pro Mode is free to open, which the UI never said before. */}
+      {!hasFiles && <ModeDiscovery />}
+
       {/* ── Staged file list (idle files only) ────────────────────── */}
       {idleFiles.length > 0 && (
         <StagedList
@@ -320,6 +329,12 @@ export default function SmartCompressor() {
           estimating={estimating} />
       )}
 
+      {/* ── Watermark expectation-setting ────────────────────────────
+          Told BEFORE they commit, not discovered after download. */}
+      {idleFiles.length > 0 && !anyCompressing && (
+        <UpgradeHint variant="note" onUpgrade={() => onAuth?.('upgrade')} />
+      )}
+
       {/* ── Compress CTA ──────────────────────────────────────────── */}
       {idleFiles.length > 0 && !anyCompressing && (
         <CompressButton count={idleFiles.length} onClick={handleCompress} />
@@ -328,6 +343,16 @@ export default function SmartCompressor() {
       {/* ── Results grid (compressing + done + error) ─────────────── */}
       {files.some(f => f.status !== 'idle') && (
         <ResultsGrid files={files} onRemove={handleRemove} />
+      )}
+
+      {/* ── The ask — the ONE moment they've felt the value ──────────
+          Anchored to the saving they just got. Dismissible, once a session. */}
+      {allSettled && doneFiles.length > 0 && (
+        <UpgradeHint
+          variant="result"
+          savedPct={totalSavingsPct}
+          storageKey="bonsai_hint_result_v1"
+          onUpgrade={() => onAuth?.('upgrade')} />
       )}
 
       {/* ── Bottom action bar ─────────────────────────────────────── */}

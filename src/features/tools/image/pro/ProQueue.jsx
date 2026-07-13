@@ -9,16 +9,19 @@
  * onMouseEnter, which can't fire while the button is invisible.
  */
 import LeafAnimation from './LeafAnimation'
-import { useDownloads } from '../../../../hooks/useDownloads'
-import { formatBytes }  from '../../../../utils/formatBytes'
+import { useDownloads }  from '../../../../hooks/useDownloads'
+import { useExportGate } from '../../../../hooks/useExportGate'
+import { formatBytes }   from '../../../../utils/formatBytes'
 
 function pct(orig, comp) {
   if (!orig || !comp || comp >= orig) return 0
   return Math.round((1 - comp / orig) * 100)
 }
 
-export default function ProQueue({ sessions, onRemove }) {
-  const { downloadOne } = useDownloads()
+export default function ProQueue({ sessions, onRemove, onAuth }) {
+  const { downloadOne }        = useDownloads()
+  const { guard, canExport }   = useExportGate(onAuth)
+
   if (!sessions.length) return null
 
   return (
@@ -34,10 +37,13 @@ export default function ProQueue({ sessions, onRemove }) {
             key={s.id}
             session={s}
             index={i}
-            onDownload={() => downloadOne({
+            /* Gated. This button used to call downloadOne directly and
+               handed free users a clean file straight past the paywall. */
+            onDownload={guard(() => downloadOne({
               id: s.id, name: s.name, size: s.size,
               outputName: null, result: s.result,
-            })}
+            }))}
+            locked={!canExport}
             onRemove={() => onRemove(s.id)} />
         ))}
       </div>
@@ -45,7 +51,7 @@ export default function ProQueue({ sessions, onRemove }) {
   )
 }
 
-function QueueCard({ session, index, onDownload, onRemove }) {
+function QueueCard({ session, index, onDownload, onRemove, locked }) {
   const { status, name, beforeUrl, result, progress = 0 } = session
   const isDone        = status === 'done'
   const isCompressing = status === 'compressing'
@@ -155,20 +161,33 @@ function QueueCard({ session, index, onDownload, onRemove }) {
           {isDone && result?.url && (
             <button
               onClick={onDownload}
-              title="Download"
+              title={locked ? 'Upgrade to download' : 'Download'}
+              aria-label={locked ? 'Upgrade to download' : 'Download'}
               style={{
                 width:20, height:20, borderRadius:4,
-                border:'none', background:'var(--c-bg)',
-                color:'var(--c)', cursor:'pointer',
+                border:'none',
+                background: locked ? 'var(--surface-3)' : 'var(--c-bg)',
+                color:      locked ? 'var(--t-tertiary)' : 'var(--c)',
+                cursor:'pointer',
                 display:'flex', alignItems:'center', justifyContent:'center',
                 transition:'background var(--t-fast)',
               }}
-              onMouseEnter={e => e.currentTarget.style.background='var(--c-bg-2)'}
-              onMouseLeave={e => e.currentTarget.style.background='var(--c-bg)'}>
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
-                   stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 1v6M2.5 5l2.5 2.5 2.5-2.5"/><path d="M1 9h8"/>
-              </svg>
+              onMouseEnter={e => e.currentTarget.style.background =
+                locked ? 'var(--surface-3)' : 'var(--c-bg-2)'}
+              onMouseLeave={e => e.currentTarget.style.background =
+                locked ? 'var(--surface-3)' : 'var(--c-bg)'}>
+              {locked ? (
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+                     stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+                  <rect x="1.8" y="4.4" width="6.4" height="4.4" rx="1.2"/>
+                  <path d="M3.4 4.4V3.2a1.6 1.6 0 0 1 3.2 0v1.2"/>
+                </svg>
+              ) : (
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+                     stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 1v6M2.5 5l2.5 2.5 2.5-2.5"/><path d="M1 9h8"/>
+                </svg>
+              )}
             </button>
           )}
         </div>
